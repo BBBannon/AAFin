@@ -396,7 +396,7 @@ class BrowseAndManageViewModelsTest {
         advanceUntilIdle()
 
         val state = viewModel.state.value
-        assertEquals(QualityTier.P720_4M, state.defaultQuality)
+        assertEquals(QualityTier.AUTO, state.defaultQuality)
         assertEquals("1.0-test", state.appVersion)
         assertEquals(listOf("alice", "bob"), state.accounts.map { it.account.userName })
         assertTrue(state.accounts.all { it.serverVersion == "Jellyfin 12.4.0" })

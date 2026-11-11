@@ -31,7 +31,7 @@ What only this plan can prove: **Android Auto hands AAFin a surface, shows the t
 |---|---|---|---|
 | 1.1 | Open **AAFin** from the launcher | A list or message appears within ~2 s. No Android Auto error screen | `AAFin/Car: Session created (car API level N)` |
 | 1.2 | — | Behind/beside the card: dark background with the **AAFin logo** | `AAFin/Surface: Surface available: WxH @Ddpi` then `Presentation showing on virtual display N` |
-| 1.3 | — | — | `AAFin/Car: Car profile: key=… name=… quality=P720_4M` within ~5 s. **Note the key** (`model:…` or `screen:…`) |
+| 1.3 | — | — | `AAFin/Car: Car profile: key=… name=… quality=AUTO` within ~5 s (a car first seen before Auto existed keeps the quality it had, e.g. `P720_4M`). **Note the key** (`model:…` or `screen:…`) |
 | 1.4 | If signed out | Message **"Sign in on your phone first."** with **Retry** and **Downloads** | `Home: active account none` |
 | 1.5 | Tap **Retry** | Same message, no error | — |
 | 1.6 | Tap **Downloads** | "Downloads" list (or "No downloads yet…"). Back returns | — |

@@ -14,6 +14,7 @@ import app.aafin.data.downloads.DownloadStatus
 import app.aafin.data.playback.PlayMethod
 import app.aafin.data.playback.PlaybackError
 import app.aafin.data.playback.QualityTier
+import app.aafin.data.playback.ScreenSize
 import app.aafin.data.playback.StreamTrack
 import app.aafin.data.playback.SubtitleDelivery
 import kotlinx.coroutines.flow.update
@@ -302,6 +303,51 @@ class CarPlayerScreensTest : CarScreenTestBase() {
 
         assertEquals(QualityTier.P480_2M, quality.current)
         assertEquals(listOf(QualityTier.P480_2M), backend.qualityChoices)
+    }
+
+    @Test
+    fun `playback is started with the car's screen size`() {
+        quality.screenSize = ScreenSize(800, 400)
+        show(PlayerScreen(carContext, env, film(1)))
+
+        assertEquals(listOf<ScreenSize?>(ScreenSize(800, 400)), backend.playedScreens)
+    }
+
+    @Test
+    fun `options show what Auto is using, and Auto is the first choice with that as its second line`() {
+        quality.current = QualityTier.AUTO
+        show(PlayerScreen(carContext, env, film(1)))
+        withTracks()
+        backend.playback.update { it.copy(autoQuality = "480p · 2.5 Mbps") }
+        val options = show(PlayerOptionsScreen(carContext, env))
+
+        val row = options.template<ListTemplate>().row("Quality")
+        assertEquals("Auto · 480p · 2.5 Mbps", row.text())
+
+        // A step down while Options is open shows up without reopening it.
+        backend.playback.update { it.copy(autoQuality = "480p · 1.5 Mbps") }
+        idle()
+        assertEquals("Auto · 480p · 1.5 Mbps", options.template<ListTemplate>().row("Quality").text())
+
+        options.template<ListTemplate>().row("Quality").tap()
+        val list = (top as ChoiceScreen).template<ListTemplate>().singleList!!
+        assertEquals("Auto (recommended)", list.rows().first().title.toString())
+        assertEquals("Auto · 480p · 1.5 Mbps", list.rows().first().text())
+        assertEquals(0, list.selectedIndex)
+        assertTrue(list.rows().drop(1).all { it.texts.isEmpty() })
+    }
+
+    @Test
+    fun `with a fixed quality the Auto choice says what it would do`() {
+        show(PlayerScreen(carContext, env, film(1)))
+        withTracks()
+        val list = show(ChoiceScreen(carContext, env, 3, ChoiceScreen.Kind.QUALITY)).template<ListTemplate>().singleList!!
+
+        assertEquals("Follows your connection and this screen", list.rows().first().text())
+
+        list.select(0)
+        assertEquals(QualityTier.AUTO, quality.current)
+        assertEquals(listOf(QualityTier.AUTO), backend.qualityChoices)
     }
 
     @Test

@@ -10,6 +10,7 @@ import app.aafin.data.downloads.DownloadedSubtitle
 import app.aafin.data.jellyfin.ItemKind
 import app.aafin.data.jellyfin.MediaEntry
 import app.aafin.data.playback.QualityTier
+import app.aafin.data.playback.ScreenSize
 import app.aafin.data.playback.StreamTrack
 import app.aafin.data.profiles.CarProfile
 import app.aafin.data.profiles.CarProfileStore
@@ -50,7 +51,7 @@ class StoresTest {
         val store = profileStore()
 
         val created = store.getOrCreate("model:dacia|duster|2025", "Dacia Duster")
-        assertEquals(CarProfile("model:dacia|duster|2025", "Dacia Duster", QualityTier.P720_4M), created)
+        assertEquals(CarProfile("model:dacia|duster|2025", "Dacia Duster", QualityTier.AUTO), created)
 
         store.setQuality(created.key, QualityTier.P1080_8M)
         store.rename(created.key, "  Duster  ")
@@ -70,7 +71,7 @@ class StoresTest {
         assertEquals(QualityTier.P480_2M, second.quality)
         assertEquals("My car", second.name)
         assertEquals(listOf("screen:1920x720@160", "screen:800x480@160"), store.profiles.first().map { it.key })
-        assertEquals(QualityTier.P720_4M, store.get("screen:1920x720@160")?.quality)
+        assertEquals(QualityTier.AUTO, store.get("screen:1920x720@160")?.quality)
 
         store.remove("screen:1920x720@160")
         assertNull(store.get("screen:1920x720@160"))
@@ -104,6 +105,67 @@ class StoresTest {
             val reloaded = profileStore(file)
             assertEquals(CarProfile("model:skoda|octavia|2019", "Octavia", QualityTier.ORIGINAL), reloaded.get("model:skoda|octavia|2019"))
         }
+    }
+
+    @Test
+    fun `a file from before Auto keeps each car's quality and moves the untouched default to Auto`() = runBlocking {
+        val file = File(temp.root, "old.json")
+        file.writeText(
+            """{"profiles":[{"key":"model:dacia|duster|2025","name":"Duster","quality":"P720_4M","lastUsedAtMs":5},
+               {"key":"screen:800x400@160","name":"Desk","quality":"P1080_8M","lastUsedAtMs":null}],"defaultQuality":"P720_4M"}""",
+        )
+        val store = profileStore(file)
+
+        assertEquals(QualityTier.P720_4M, store.get("model:dacia|duster|2025")?.quality)
+        assertEquals(QualityTier.P1080_8M, store.get("screen:800x400@160")?.quality)
+        assertNull("no screen size was saved back then", store.get("model:dacia|duster|2025")?.screen)
+        assertEquals(QualityTier.AUTO, store.defaultQuality.first())
+        assertEquals(QualityTier.AUTO, store.getOrCreate("model:skoda|octavia|2019", "Octavia").quality)
+
+        // Choosing 720p as the default afterwards is a real choice and sticks.
+        store.setDefaultQuality(QualityTier.P720_4M)
+        assertEquals(QualityTier.P720_4M, store.defaultQuality.first())
+        assertEquals(QualityTier.P720_4M, store.getOrCreate("screen:1024x600@160", "Other").quality)
+    }
+
+    @Test
+    fun `a default the user had changed before Auto existed is kept`() = runBlocking {
+        val file = File(temp.root, "old-custom.json")
+        file.writeText("""{"profiles":[],"defaultQuality":"P480_2M"}""")
+
+        assertEquals(QualityTier.P480_2M, profileStore(file).defaultQuality.first())
+    }
+
+    @Test
+    fun `a quality this version does not know is read as Auto instead of failing`() = runBlocking {
+        val file = File(temp.root, "future.json")
+        file.writeText(
+            """{"profiles":[{"key":"screen:1x1@1","name":"Odd","quality":"P2160_40M"}],"defaultQuality":"SOMETHING_NEW","autoDefaultApplied":true}""",
+        )
+        val store = profileStore(file)
+
+        assertEquals(CarProfile("screen:1x1@1", "Odd", QualityTier.AUTO), store.get("screen:1x1@1"))
+        assertEquals(QualityTier.AUTO, store.defaultQuality.first())
+    }
+
+    @Test
+    fun `tiers are stored by name and the screen size survives a reload`() {
+        val file = File(temp.root, "screen.json")
+        runBlocking {
+            val job = Job()
+            val first = CarProfileStore(
+                testJsonDataStore(file, CarProfilesState.serializer(), CarProfilesState(), CoroutineScope(Dispatchers.IO + job)),
+            )
+            first.getOrCreate("model:dacia|duster|2025", "Duster")
+            first.setScreen("model:dacia|duster|2025", 800, 400)
+            job.cancelAndJoin()
+        }
+        assertTrue(file.readText().contains("\"quality\":\"AUTO\""))
+
+        runBlocking {
+            assertEquals(ScreenSize(800, 400), profileStore(file).get("model:dacia|duster|2025")?.screen)
+        }
+        assertEquals(QualityTier.entries.toList(), QualityTier.entries.map { QualityTier.fromStored(it.name) })
     }
 
     @Test

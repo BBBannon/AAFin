@@ -60,4 +60,4 @@ You only do this **once per phone**. (Already done on the owner's Pixel; still n
 ## Per-car picture quality
 
 - Each car appears in the **Cars** tab the first time AAFin runs on its screen.
-- There you can **rename** it and set its **quality** (default 720p · 4 Mbps).
+- There you can **rename** it and set its **quality**. The default is **Auto**: it follows your connection and the car's screen, and lowers itself if the video starts to stall.

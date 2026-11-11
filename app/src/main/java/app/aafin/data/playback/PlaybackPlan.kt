@@ -62,6 +62,8 @@ data class PlaybackRequest(
     val subtitleStreamIndex: Int? = null,
     /** Refuse direct play/stream: used for 720p downloads and as a fallback after decoder errors. */
     val forceTranscode: Boolean = false,
+    /** Bitrate and picture-size limits; by default the tier's own, with no car screen taken into account. */
+    val limits: StreamLimits = StreamLimits.forTier(tier),
 )
 
 /**
@@ -88,6 +90,8 @@ data class PlaybackPlan(
     /** True when the selected subtitle is burned into the picture rather than side-loaded. */
     val subtitleBurnedIn: Boolean,
     val runtimeMs: Long?,
+    /** The file's own total bitrate in bits per second, when the server reports it. */
+    val sourceBitrate: Int? = null,
 ) {
     val itemId: String get() = request.itemId
 

@@ -16,10 +16,12 @@ import app.aafin.data.jellyfin.SdkAuthGateway
 import app.aafin.data.jsonDataStore
 import app.aafin.data.playback.AuthHeaderInterceptor
 import app.aafin.data.playback.CodecCapabilities
+import app.aafin.data.playback.MeasuredThroughput
 import app.aafin.data.playback.MediaCodecCapabilities
 import app.aafin.data.playback.PlaybackController
 import app.aafin.data.playback.PlaybackResolver
 import app.aafin.data.playback.ProgressReporter
+import app.aafin.data.playback.SavedThroughput
 import app.aafin.data.playback.SdkPlaystateGateway
 import app.aafin.data.playback.WorkManagerPositionQueue
 import app.aafin.data.profiles.CarProfileStore
@@ -113,6 +115,17 @@ class AppGraph(context: Context) {
         DownloadRepo(appContext, downloadEnvironment, playbackResolver, accountStore, mediaHttpClient, appScope)
     }
 
+    /** Measured download speed, for the Auto quality tier; remembers the last good value across restarts. Main thread. */
+    val throughput: MeasuredThroughput by lazy {
+        MeasuredThroughput(
+            context = appContext,
+            store = jsonDataStore(appContext.dataStoreFile("throughput.json"), SavedThroughput.serializer(), SavedThroughput()) {
+                Log.e(TAG, "The saved connection speed was unreadable and has been reset")
+            },
+            scope = appScope,
+        )
+    }
+
     /** The single player. Main thread. */
     val playback: PlaybackController by lazy {
         PlaybackController(
@@ -122,6 +135,8 @@ class AppGraph(context: Context) {
             downloads = downloads,
             dataSourceFactory = downloadEnvironment.playbackDataSourceFactory,
             scope = appScope,
+            bandwidthMeter = throughput.meter,
+            throughput = throughput,
         )
     }
 

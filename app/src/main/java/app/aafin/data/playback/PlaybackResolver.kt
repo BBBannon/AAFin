@@ -40,7 +40,7 @@ data class OfflineMedia(
  * Works out how to play an item.
  *
  * - Online: asks Jellyfin (`POST /Items/{id}/PlaybackInfo`) with this phone's device profile and
- *   the quality cap, then [PlaybackDecision] picks direct play or the transcoding URL.
+ *   the request's [StreamLimits], then [PlaybackDecision] picks direct play or the transcoding URL.
  * - Offline: wraps a completed download.
  *
  * The start position is deliberately not sent to the server: every stream (including HLS
@@ -79,7 +79,16 @@ class PlaybackResolver(
             response = playbackInfo(api, account.userId, effective)
         }
 
-        return PlaybackDecision.decide(account.serverUrl, account.id, effective, response)
+        var plan = PlaybackDecision.decide(account.serverUrl, account.id, effective, response)
+        if (plan.subtitleBurnedIn && !effective.forceTranscode && effective.limits.transcodeSize != null) {
+            // A subtitle is being burned in, so the video is re-encoded anyway - but that alone does
+            // not make the server apply the picture-size ceiling. Asking again as a forced
+            // transcode does (see DeviceProfileBuilder).
+            effective = effective.copy(forceTranscode = true)
+            response = playbackInfo(api, account.userId, effective)
+            plan = PlaybackDecision.decide(account.serverUrl, account.id, effective, response)
+        }
+        return plan
     }
 
     fun resolveOffline(media: OfflineMedia, tier: QualityTier, subtitleStreamIndex: Int? = null): ResolvedPlayback {
@@ -108,11 +117,11 @@ class PlaybackResolver(
                 itemId = request.itemId.toUUID(),
                 data = PlaybackInfoDto(
                     userId = userId.toUUID(),
-                    maxStreamingBitrate = request.tier.streamingBitrate,
+                    maxStreamingBitrate = request.limits.maxBitrate,
                     audioStreamIndex = request.audioStreamIndex,
                     // -1 = no subtitles. Leaving it unset lets the server pick one, which can force a burn-in transcode.
                     subtitleStreamIndex = request.subtitleStreamIndex ?: -1,
-                    deviceProfile = DeviceProfileBuilder.build(request.tier, capabilities),
+                    deviceProfile = DeviceProfileBuilder.build(request.limits, capabilities, request.forceTranscode),
                     enableDirectPlay = !request.forceTranscode,
                     enableDirectStream = !request.forceTranscode,
                     enableTranscoding = true,

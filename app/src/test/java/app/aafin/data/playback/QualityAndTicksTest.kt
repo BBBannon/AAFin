@@ -29,8 +29,10 @@ class QualityAndTicksTest {
     }
 
     @Test
-    fun `default tier is 720p at 4 Mbps`() {
-        assertEquals(QualityTier.P720_4M, QualityTier.DEFAULT)
+    fun `default tier is Auto, and it is listed first`() {
+        assertEquals(QualityTier.AUTO, QualityTier.DEFAULT)
+        assertEquals(QualityTier.AUTO, QualityTier.entries.first())
+        assertEquals("Auto (recommended)", QualityTier.AUTO.label)
     }
 
     @Test
@@ -107,6 +109,61 @@ class QualityAndTicksTest {
         val profile = DeviceProfileBuilder.build(QualityTier.ORIGINAL, everything)
         assertEquals(QualityTier.UNCAPPED_BITRATE, profile.maxStreamingBitrate)
         assertTrue(profile.codecProfiles.flatMap { it.conditions }.none { it.property == ProfileConditionValue.WIDTH })
+    }
+
+    private fun sizeOf(conditions: List<org.jellyfin.sdk.model.api.ProfileCondition>): Pair<String?, String?> =
+        conditions.firstOrNull { it.property == ProfileConditionValue.WIDTH }?.value to
+            conditions.firstOrNull { it.property == ProfileConditionValue.HEIGHT }?.value
+
+    @Test
+    fun `a tier on its own sends no transcode size ceiling`() {
+        val profile = DeviceProfileBuilder.build(QualityTier.P720_4M, everything)
+        assertTrue(profile.transcodingProfiles.single().conditions.isEmpty())
+    }
+
+    @Test
+    fun `on a car screen the transcode is capped to the screen but direct play keeps the tier's width`() {
+        val limits = StreamLimits.forCar(QualityTier.P720_4M, ScreenSize(800, 400))
+        assertEquals(StreamLimits(4_000_000, 1280, PictureSize.P480), limits)
+
+        val profile = DeviceProfileBuilder.build(limits, everything)
+        val ceiling = profile.transcodingProfiles.single().conditions
+        assertEquals("854" to "480", sizeOf(ceiling))
+        assertTrue(ceiling.all { it.condition == org.jellyfin.sdk.model.api.ProfileConditionType.LESS_THAN_EQUAL && !it.isRequired })
+        // The direct-play rule is the tier's own, as before: a 720p file still plays untouched.
+        assertEquals("1280" to null, sizeOf(profile.codecProfiles.filter { it.codec == null }.flatMap { it.conditions }))
+        assertEquals(4_000_000, profile.maxStreamingBitrate)
+    }
+
+    @Test
+    fun `a forced transcode also carries the ceiling as a codec condition`() {
+        val limits = StreamLimits.forCar(QualityTier.P1080_8M, ScreenSize(800, 400))
+        val profile = DeviceProfileBuilder.build(limits, everything, forceTranscode = true)
+
+        assertEquals("854" to "480", sizeOf(profile.codecProfiles.filter { it.codec == null }.flatMap { it.conditions }))
+        assertEquals("854" to "480", sizeOf(profile.transcodingProfiles.single().conditions))
+    }
+
+    @Test
+    fun `limits follow the tier, the screen and the Auto level`() {
+        val small = ScreenSize(800, 400)
+        // A tier never asks for more than itself, whatever the screen.
+        assertEquals(PictureSize.P480, StreamLimits.forCar(QualityTier.P480_2M, ScreenSize(1920, 1080)).transcodeSize)
+        assertEquals(PictureSize.P720, StreamLimits.forCar(QualityTier.P1080_15M, ScreenSize(1280, 720)).transcodeSize)
+        // Unknown screen: 1280x720.
+        assertEquals(PictureSize.P720, StreamLimits.forCar(QualityTier.P1080_8M, null).transcodeSize)
+        assertEquals(PictureSize.P480, StreamLimits.forCar(QualityTier.P480_2M, null).transcodeSize)
+        // Original is never limited.
+        assertEquals(StreamLimits(QualityTier.UNCAPPED_BITRATE, null, null), StreamLimits.forCar(QualityTier.ORIGINAL, small))
+        // Auto: bitrate and size from its level, and no width rule for direct play.
+        assertEquals(
+            StreamLimits(1_500_000, null, PictureSize.P480),
+            StreamLimits.forCar(QualityTier.AUTO, small, AutoLevel(1_500_000, PictureSize.P480)),
+        )
+        // Without a car (downloads): the tier's own numbers only.
+        assertEquals(StreamLimits(4_000_000, 1280, null), StreamLimits.forTier(QualityTier.P720_4M))
+        assertEquals(StreamLimits(3_000_000, null, PictureSize.P480), StreamLimits.forTier(QualityTier.AUTO))
+        assertEquals(StreamLimits.forTier(QualityTier.P720_4M), PlaybackRequest("item", QualityTier.P720_4M).limits)
     }
 
     @Test

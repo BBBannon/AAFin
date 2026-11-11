@@ -41,7 +41,10 @@ class MediaCodecCapabilities : CodecCapabilities {
  *   aac/mp3/opus/flac/vorbis/ac3/eac3 have a decoder on this phone.
  * - Transcoding: HLS with MPEG-TS segments, h264 + stereo aac. This is the combination the
  *   official Jellyfin Android TV client uses with ExoPlayer.
- * - Picture width and bitrate are capped by the [QualityTier]; anything above is transcoded down.
+ * - Bitrate and picture size are capped by the [StreamLimits]; anything above is transcoded down.
+ *   The picture-size ceiling for transcodes travels as conditions on the transcoding profile:
+ *   Jellyfin has no `MaxWidth`/`MaxHeight` field in the PlaybackInfo request, and applies those
+ *   conditions only to video it re-encodes - so a file that can play directly still does.
  * - Text subtitles are delivered as separate files (External); picture-based ones are burned in.
  */
 object DeviceProfileBuilder {
@@ -72,15 +75,22 @@ object DeviceProfileBuilder {
     /** Picture-based subtitle formats; the server burns these into the video. */
     val IMAGE_SUBTITLE_FORMATS = listOf("pgs", "pgssub", "dvdsub", "dvbsub")
 
-    fun build(tier: QualityTier, capabilities: CodecCapabilities): DeviceProfile {
+    /** The profile for a tier's own limits, with no car screen involved. */
+    fun build(tier: QualityTier, capabilities: CodecCapabilities): DeviceProfile = build(StreamLimits.forTier(tier), capabilities)
+
+    /**
+     * @param forceTranscode the request refuses direct play, so the picture-size ceiling is also
+     *   given as a codec condition - which the server applies to every transcode, whatever its reason.
+     */
+    fun build(limits: StreamLimits, capabilities: CodecCapabilities, forceTranscode: Boolean = false): DeviceProfile {
         // h264 and aac are the transcoding targets, so they are always listed: every Android phone decodes them.
         val videoCodecs = VIDEO_CODECS.filter { (name, mime) -> name == "h264" || capabilities.hasDecoder(mime) }.map { it.first }
         val audioCodecs = AUDIO_CODECS.filter { (name, mime) -> name == "aac" || capabilities.hasDecoder(mime) }.map { it.first }
 
         return DeviceProfile(
             name = "AAFin",
-            maxStreamingBitrate = tier.streamingBitrate,
-            maxStaticBitrate = tier.streamingBitrate,
+            maxStreamingBitrate = limits.maxBitrate,
+            maxStaticBitrate = limits.maxBitrate,
             directPlayProfiles = listOf(
                 DirectPlayProfile(
                     container = DIRECT_PLAY_CONTAINERS,
@@ -100,17 +110,17 @@ object DeviceProfileBuilder {
                     maxAudioChannels = "2",
                     copyTimestamps = false,
                     enableSubtitlesInManifest = false,
-                    conditions = emptyList(),
+                    conditions = sizeConditions(limits.transcodeSize?.width, limits.transcodeSize?.height),
                 ),
             ),
             containerProfiles = emptyList(),
-            codecProfiles = codecProfiles(tier),
+            codecProfiles = codecProfiles(limits, forceTranscode),
             subtitleProfiles = TEXT_SUBTITLE_FORMATS.map { SubtitleProfile(format = it, method = SubtitleDeliveryMethod.EXTERNAL) } +
                 IMAGE_SUBTITLE_FORMATS.map { SubtitleProfile(format = it, method = SubtitleDeliveryMethod.ENCODE) },
         )
     }
 
-    private fun codecProfiles(tier: QualityTier): List<CodecProfile> = buildList {
+    private fun codecProfiles(limits: StreamLimits, forceTranscode: Boolean): List<CodecProfile> = buildList {
         // Phone hardware decoders do not handle 10-bit h264; make the server convert it.
         add(
             CodecProfile(
@@ -120,16 +130,17 @@ object DeviceProfileBuilder {
                 applyConditions = emptyList(),
             ),
         )
-        tier.maxWidth?.let { maxWidth ->
-            add(
-                CodecProfile(
-                    type = CodecType.VIDEO,
-                    conditions = listOf(atMost(ProfileConditionValue.WIDTH, maxWidth)),
-                    applyConditions = emptyList(),
-                ),
-            )
+        val ceiling = limits.transcodeSize.takeIf { forceTranscode }
+        val conditions = sizeConditions(listOfNotNull(limits.directPlayMaxWidth, ceiling?.width).minOrNull(), ceiling?.height)
+        if (conditions.isNotEmpty()) {
+            add(CodecProfile(type = CodecType.VIDEO, conditions = conditions, applyConditions = emptyList()))
         }
     }
+
+    private fun sizeConditions(maxWidth: Int?, maxHeight: Int?): List<ProfileCondition> = listOfNotNull(
+        maxWidth?.let { atMost(ProfileConditionValue.WIDTH, it) },
+        maxHeight?.let { atMost(ProfileConditionValue.HEIGHT, it) },
+    )
 
     private fun atMost(property: ProfileConditionValue, value: Int) = ProfileCondition(
         condition = ProfileConditionType.LESS_THAN_EQUAL,

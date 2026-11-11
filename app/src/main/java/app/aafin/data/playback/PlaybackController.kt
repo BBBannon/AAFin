@@ -1,6 +1,7 @@
 package app.aafin.data.playback
 
 import android.content.Context
+import android.os.SystemClock
 import android.util.Log
 import androidx.annotation.MainThread
 import androidx.annotation.OptIn
@@ -10,10 +11,13 @@ import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.Tracks
+import androidx.media3.common.VideoSize
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DataSource
+import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.exoplayer.upstream.BandwidthMeter
 import androidx.media3.session.MediaSession
 import app.aafin.data.downloads.DownloadRepo
 import app.aafin.data.jellyfin.JellyfinException
@@ -62,6 +66,10 @@ data class PlaybackState(
     val error: PlaybackError? = null,
     val playMethod: PlayMethod? = null,
     val tier: QualityTier? = null,
+    /** What Auto is using right now ("480p · 2.5 Mbps"); null unless an Auto stream is playing. */
+    val autoQuality: String? = null,
+    /** A short message about an automatic quality change, shown over the picture for a few seconds. */
+    val qualityNotice: String? = null,
     val audioTracks: List<StreamTrack> = emptyList(),
     val subtitleTracks: List<StreamTrack> = emptyList(),
     /** Jellyfin stream index of the audio track in use, if known. */
@@ -81,6 +89,13 @@ data class PlaybackState(
  * player screen attaches [player] to a `PlayerView` and renders [state].
  *
  * Playback prefers a completed download of the item over streaming it.
+ *
+ * With [QualityTier.AUTO] the controller also watches for stalls and re-resolves the stream at a
+ * lower (or, after a long clean run, higher) level - see [AutoQualityTracker]. Fixed tiers never
+ * change by themselves.
+ *
+ * @param bandwidthMeter given to the player; must be the meter [throughput] reads from.
+ * @param clock a steadily increasing millisecond clock (for stall timing).
  */
 @MainThread
 @OptIn(UnstableApi::class)
@@ -91,6 +106,9 @@ class PlaybackController(
     private val downloads: DownloadRepo,
     private val dataSourceFactory: DataSource.Factory,
     private val scope: CoroutineScope,
+    private val bandwidthMeter: BandwidthMeter,
+    private val throughput: ThroughputEstimator,
+    private val clock: () -> Long = SystemClock::elapsedRealtime,
 ) {
     private val appContext = context.applicationContext
 
@@ -123,6 +141,13 @@ class PlaybackController(
     private var ticker: Job? = null
     private var transcodeFallbackTried = false
 
+    /** Lives across items, so a step down made during one episode still counts for the next. */
+    private val auto = AutoQualityTracker()
+
+    /** The car screen the current item was started for; null if unknown. */
+    private var screen: ScreenSize? = null
+    private var noticeJob: Job? = null
+
     /** Serialises operations that talk to the server, so two taps cannot interleave. */
     private val operations = Mutex()
 
@@ -134,12 +159,20 @@ class PlaybackController(
      *
      * Plays a completed download if there is one, otherwise streams within [tier].
      *
+     * @param screen the car's drawing surface, so transcodes are no larger than it can show;
+     *   null if it is not known (1280×720 is then assumed).
      * @return true if playback started. On failure [state]'s `error` says why.
      */
-    suspend fun play(entry: MediaEntry, tier: QualityTier, startPositionMs: Long = entry.resumePositionMs): Boolean {
+    suspend fun play(
+        entry: MediaEntry,
+        tier: QualityTier,
+        startPositionMs: Long = entry.resumePositionMs,
+        screen: ScreenSize? = null,
+    ): Boolean {
         endSession()
         val myGeneration = generation
         transcodeFallbackTried = false
+        this.screen = screen
         _state.value = PlaybackState(item = entry, title = entry.displayTitle, isLoading = true, tier = tier)
 
         return operations.withLock {
@@ -148,7 +181,7 @@ class PlaybackController(
                 if (offline != null) {
                     resolver.resolveOffline(offline, tier)
                 } else {
-                    resolver.resolveOnline(PlaybackRequest(entry.id, tier), entry.displayTitle)
+                    resolver.resolveOnline(PlaybackRequest(entry.id, tier, limits = limitsFor(tier)), entry.displayTitle)
                 }
             } catch (e: JellyfinException) {
                 if (myGeneration == generation) {
@@ -248,7 +281,7 @@ class PlaybackController(
     suspend fun setQuality(tier: QualityTier) = operations.withLock {
         val plan = session?.plan ?: return@withLock
         if (plan.playMethod == PlayMethod.OFFLINE || plan.request.tier == tier) return@withLock
-        restartStream(plan.request.copy(tier = tier))
+        restartStream(plan.request.copy(tier = tier, limits = limitsFor(tier)))
     }
 
     /**
@@ -291,6 +324,14 @@ class PlaybackController(
             .setWakeMode(C.WAKE_MODE_NETWORK)
             .setSeekBackIncrementMs(SEEK_BACK_MS)
             .setSeekForwardIncrementMs(SEEK_FORWARD_MS)
+            // The shared meter: its estimate outlives each item and feeds the Auto quality start level.
+            .setBandwidthMeter(bandwidthMeter)
+            // A deeper buffer than Media3's default (50 s) to ride out mobile-data dips; see ARCHITECTURE §13.5.
+            .setLoadControl(
+                DefaultLoadControl.Builder()
+                    .setBufferDurationsMsForStreaming(MIN_BUFFER_MS, MAX_BUFFER_MS, BUFFER_FOR_PLAYBACK_MS, BUFFER_AFTER_REBUFFER_MS)
+                    .build(),
+            )
             .build()
         player.addListener(PlayerListener())
         // A plain MediaSession (no MediaSessionService / MediaBrowser) gives steering-wheel and
@@ -302,6 +343,8 @@ class PlaybackController(
     private fun begin(entry: MediaEntry, resolved: ResolvedPlayback, startPositionMs: Long, playWhenReady: Boolean) {
         val current = ActiveSession(entry, resolved.plan)
         session = current
+        val plan = resolved.plan
+        if (isAuto(plan)) auto.onStreamLoading(plan.sourceBitrate.takeIf { plan.playMethod != PlayMethod.TRANSCODE })
         _state.update { it.copy(error = null, isLoading = false, isEnded = false) }
 
         val player = player
@@ -327,9 +370,11 @@ class PlaybackController(
      * Not cancellable: it is called from a screen's coroutine, and a screen closed half-way
      * through (Back pressed while a quality change is in flight) must not leave the player
      * stopped, or "Loading…" showing, for good. [generation] still stops it when playback is replaced.
+     *
+     * @return true if the new stream was started; false if playback had moved on in the meantime.
      */
-    private suspend fun restartStream(request: PlaybackRequest) = withContext(NonCancellable) {
-        val current = session ?: return@withContext
+    private suspend fun restartStream(request: PlaybackRequest): Boolean = withContext(NonCancellable) {
+        val current = session ?: return@withContext false
         val myGeneration = generation
         _state.update { it.copy(isLoading = true) }
         val resolved = try {
@@ -338,7 +383,7 @@ class PlaybackController(
             if (myGeneration == generation) _state.update { it.copy(isLoading = false) }
             throw e
         }
-        if (myGeneration != generation) return@withContext
+        if (myGeneration != generation) return@withContext false
 
         val player = player
         val position = player.currentPosition
@@ -352,14 +397,99 @@ class PlaybackController(
             current.stopReported = true
             reporter.stopped(lastSnapshot)
         }
-        if (myGeneration != generation) return@withContext
+        if (myGeneration != generation) return@withContext false
         begin(current.entry, resolved, position, playWhenReady)
+        true
     }
+
+    // --- Automatic quality -----------------------------------------------------------------
+
+    private fun isAuto(plan: PlaybackPlan): Boolean = plan.request.tier == QualityTier.AUTO && plan.playMethod != PlayMethod.OFFLINE
+
+    private fun autoSession(): ActiveSession? = session?.takeIf { isAuto(it.plan) }
+
+    /** The limits to request a stream with at [tier] on the current screen. Starts Auto afresh when [tier] is Auto. */
+    private suspend fun limitsFor(tier: QualityTier): StreamLimits {
+        val screenText = screen?.let { "${it.widthPx}x${it.heightPx}" } ?: "unknown"
+        if (tier != QualityTier.AUTO) {
+            val limits = StreamLimits.forCar(tier, screen)
+            val size = limits.transcodeSize?.let { "${it.width}x${it.height}" } ?: "any size"
+            Log.i(QUALITY_TAG, "Quality $tier: screen $screenText, cap ${AutoQuality.mbps(limits.maxBitrate)}, transcodes up to $size")
+            return limits
+        }
+        val estimate = throughput.estimateBps()
+        val level = auto.start(clock(), estimate, screen)
+        val estimateText = estimate?.let { AutoQuality.mbps(it.coerceAtMost(Int.MAX_VALUE.toLong()).toInt()) } ?: "none"
+        Log.i(
+            QUALITY_TAG,
+            "Auto quality: screen $screenText (ceiling ${PictureSize.forScreen(screen).label}), estimate $estimateText, " +
+                "starting at ${level.label} (${level.picture.width}x${level.picture.height})",
+        )
+        return StreamLimits.forCar(tier, screen, level)
+    }
+
+    private fun onStalled() {
+        if (autoSession() == null) return
+        val change = auto.onBuffering(clock(), createdPlayer?.playWhenReady == true)
+        if (change != null || auto.isStalled) Log.i(QUALITY_TAG, "Auto quality: playback stalled (${auto.stallCount} in the last 60 s)")
+        change?.let(::applyAutoChange)
+    }
+
+    private suspend fun autoTick() {
+        if (autoSession() == null) return
+        auto.onTick(clock(), createdPlayer?.isPlaying == true, throughput.estimateBps())?.let(::applyAutoChange)
+    }
+
+    /** Carries out a level change Auto has decided on: same item, position, audio and subtitles; new limits. */
+    private fun applyAutoChange(change: AutoChange) {
+        val current = autoSession() ?: return auto.failed(clock())
+        val target = change.to
+        if (target == null) {
+            Log.i(QUALITY_TAG, "Auto quality: ${change.reason.logText}, but there is nothing lower than ${change.from.label} to try")
+            return
+        }
+        scope.launch {
+            val started = try {
+                operations.withLock {
+                    if (session !== current || !isAuto(current.plan)) return@withLock false
+                    val direction = if (change.isStepDown) "down" else "up"
+                    Log.i(
+                        QUALITY_TAG,
+                        "Auto quality: stepping $direction from ${change.from.label} to ${target.label} " +
+                            "after ${change.reason.logText} (was ${current.plan.playMethod})",
+                    )
+                    restartStream(current.plan.request.copy(limits = StreamLimits.forCar(QualityTier.AUTO, screen, target)))
+                }
+            } catch (e: JellyfinException) {
+                Log.w(QUALITY_TAG, "Auto quality: could not change level (${e.kind}); staying at ${change.from.label}")
+                false
+            }
+            if (started) {
+                auto.applied(change, clock())
+                // Said once the new stream is on its way, so it explains the pause while that buffers.
+                showQualityNotice(if (change.isStepDown) NOTICE_LOWERING else NOTICE_RAISING)
+            } else {
+                auto.failed(clock())
+            }
+        }
+    }
+
+    private fun showQualityNotice(text: String) {
+        noticeJob?.cancel()
+        _state.update { it.copy(qualityNotice = text) }
+        noticeJob = scope.launch {
+            delay(QUALITY_NOTICE_MS)
+            _state.update { it.copy(qualityNotice = null) }
+        }
+    }
+
+    // ---------------------------------------------------------------------------------------
 
     private fun endSession() {
         generation++
         ticker?.cancel()
         ticker = null
+        noticeJob?.cancel()
         val current = session ?: return
         session = null
         reportStopped(current)
@@ -409,6 +539,7 @@ class PlaybackController(
             while (isActive) {
                 delay(TICK_MS)
                 publish()
+                autoTick()
                 seconds++
                 if (seconds % PROGRESS_REPORT_EVERY_TICKS == 0 && createdPlayer?.isPlaying == true) reportProgress()
             }
@@ -432,6 +563,7 @@ class PlaybackController(
                 isEnded = player.playbackState == Player.STATE_ENDED,
                 playMethod = plan.playMethod,
                 tier = plan.request.tier,
+                autoQuality = if (isAuto(plan)) AutoQuality.describe(autoLevel(plan.request.limits), plan.playMethod) else null,
                 audioTracks = plan.audioTracks,
                 subtitleTracks = plan.subtitleTracks,
                 audioStreamIndex = plan.audioStreamIndex,
@@ -439,6 +571,8 @@ class PlaybackController(
             )
         }
     }
+
+    private fun autoLevel(limits: StreamLimits): AutoLevel = AutoLevel(limits.maxBitrate, limits.transcodeSize ?: PictureSize.P1080)
 
     /**
      * Points ExoPlayer at the tracks the plan asks for. Runs when playback starts and again
@@ -551,22 +685,33 @@ class PlaybackController(
         override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
             publish()
             reportProgress() // pause / resume
+            if (!playWhenReady) auto.onPaused()
         }
 
         override fun onPlaybackStateChanged(playbackState: Int) {
             publish()
             when (playbackState) {
                 Player.STATE_ENDED -> onEnded()
-                Player.STATE_READY -> onReady()
+                Player.STATE_READY -> {
+                    auto.onReady()
+                    onReady()
+                }
+                Player.STATE_BUFFERING -> onStalled()
                 else -> Unit
             }
         }
 
         override fun onPositionDiscontinuity(oldPosition: Player.PositionInfo, newPosition: Player.PositionInfo, reason: Int) {
+            if (reason == Player.DISCONTINUITY_REASON_SEEK || reason == Player.DISCONTINUITY_REASON_SEEK_ADJUSTMENT) auto.onSeek()
             if (reason == Player.DISCONTINUITY_REASON_SEEK) {
                 publish()
                 reportProgress()
             }
+        }
+
+        override fun onVideoSizeChanged(videoSize: VideoSize) {
+            // What actually arrived: shows the picture-size ceiling at work.
+            if (videoSize.width > 0 && videoSize.height > 0) Log.i(QUALITY_TAG, "Video size ${videoSize.width}x${videoSize.height}")
         }
 
         override fun onTracksChanged(tracks: Tracks) = applyTrackSelection()
@@ -576,6 +721,18 @@ class PlaybackController(
 
     private companion object {
         const val TAG = "AAFin.Playback"
+
+        /** The car side's playback tag: quality decisions sit beside its "Play …" lines in logcat. */
+        const val QUALITY_TAG = "AAFin/Playback"
+        const val NOTICE_LOWERING = "Lowering quality to keep playing smoothly"
+        const val NOTICE_RAISING = "Connection is steady again: raising quality"
+        const val QUALITY_NOTICE_MS = 6_000L
+
+        // Buffering for streams (see ARCHITECTURE §13.5). Media3's defaults: 50 s / 50 s / 1 s / 2 s.
+        const val MIN_BUFFER_MS = 30_000
+        const val MAX_BUFFER_MS = 120_000
+        const val BUFFER_FOR_PLAYBACK_MS = 2_500
+        const val BUFFER_AFTER_REBUFFER_MS = 5_000
         const val SESSION_ID = "aafin-playback"
         const val TICK_MS = 1_000L
         const val PROGRESS_REPORT_EVERY_TICKS = 10

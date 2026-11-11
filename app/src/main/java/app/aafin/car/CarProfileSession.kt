@@ -7,13 +7,16 @@ import androidx.car.app.hardware.common.CarValue
 import androidx.car.app.versioning.CarAppApiLevels
 import androidx.core.content.ContextCompat
 import app.aafin.data.playback.QualityTier
+import app.aafin.data.playback.ScreenSize
 import app.aafin.data.profiles.CarProfileStore
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.async
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withTimeoutOrNull
+import java.io.IOException
 import kotlin.coroutines.resume
 
 /**
@@ -26,13 +29,14 @@ import kotlin.coroutines.resume
  * @param fetchModel asks the car for its model; returns null if it will not say. May never return.
  */
 class CarProfileSession(
-    scope: CoroutineScope,
+    private val scope: CoroutineScope,
     private val store: CarProfileStore,
     fetchModel: suspend () -> CarModel?,
     modelTimeoutMs: Long = MODEL_TIMEOUT_MS,
     surfaceTimeoutMs: Long = SURFACE_TIMEOUT_MS,
 ) : CarQuality {
     private val firstSurface = CompletableDeferred<SurfaceSpec>()
+    private var latestSurface: SurfaceSpec? = null
 
     private val identity: Deferred<CarIdentity> = scope.async {
         val model = withTimeoutOrNull(modelTimeoutMs) { fetchModel() }
@@ -48,9 +52,22 @@ class CarProfileSession(
         identity
     }
 
-    /** The renderer reports the first surface it is given; later ones are ignored. */
+    /**
+     * The renderer reports every surface it is given. The first one identifies a car that will not
+     * name itself; the latest one is the screen size, which is also saved on the car's profile.
+     */
     fun onSurface(spec: SurfaceSpec) {
         firstSurface.complete(spec)
+        if (spec == latestSurface) return
+        latestSurface = spec
+        scope.launch {
+            try {
+                store.setScreen(identity.await().key, spec.width, spec.height)
+            } catch (e: IOException) {
+                // Only the copy for next time is lost; this connection still knows its screen.
+                Log.w(CarLog.CAR, "The car's screen size could not be saved: ${e.javaClass.simpleName}")
+            }
+        }
     }
 
     /** Read afresh every time, so a change made on the phone applies to the next thing played. */
@@ -64,6 +81,12 @@ class CarProfileSession(
         store.getOrCreate(identity.key, identity.suggestedName)
         store.setQuality(identity.key, tier)
         Log.i(CarLog.CAR, "Car profile ${identity.key}: quality set to $tier")
+    }
+
+    override suspend fun screen(): ScreenSize? {
+        latestSurface?.let { return ScreenSize(it.width, it.height) }
+        val identity = identity.await()
+        return store.getOrCreate(identity.key, identity.suggestedName).screen
     }
 
     companion object {

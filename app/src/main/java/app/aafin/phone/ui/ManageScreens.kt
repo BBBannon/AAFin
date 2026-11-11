@@ -319,7 +319,8 @@ private fun RenameDialog(currentName: String, onDismiss: () -> Unit, onRename: (
 
 private fun qualityNote(tier: QualityTier): String = when (tier) {
     QualityTier.P480_2M -> "Lightest on mobile data."
-    QualityTier.P720_4M -> "Recommended: sharp on a car screen, modest data use."
+    QualityTier.AUTO -> "Recommended: follows your connection and the car's screen, and lowers itself if the video starts to stall."
+    QualityTier.P720_4M -> "Sharp on a car screen, modest data use."
     QualityTier.P1080_8M -> "Full HD. About twice the data of 720p."
     QualityTier.P1080_15M -> "Full HD at high quality. Needs a strong connection."
     QualityTier.ORIGINAL -> "No limit: the file as it is. Can use a lot of data."

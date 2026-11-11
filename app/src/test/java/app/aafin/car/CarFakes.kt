@@ -14,6 +14,7 @@ import app.aafin.data.jellyfin.MediaEntry
 import app.aafin.data.jellyfin.Page
 import app.aafin.data.playback.PlaybackState
 import app.aafin.data.playback.QualityTier
+import app.aafin.data.playback.ScreenSize
 import kotlinx.coroutines.flow.MutableStateFlow
 import java.io.File
 
@@ -67,6 +68,7 @@ class FakeBackend : CarBackend {
 
     override val playback = MutableStateFlow(PlaybackState())
     val played = mutableListOf<Pair<MediaEntry, QualityTier>>()
+    val playedScreens = mutableListOf<ScreenSize?>()
     var playSucceeds = true
     var stops = 0
     var toggles = 0
@@ -76,8 +78,9 @@ class FakeBackend : CarBackend {
     val qualityChoices = mutableListOf<QualityTier>()
     var retries = 0
 
-    override suspend fun play(entry: MediaEntry, tier: QualityTier): Boolean {
+    override suspend fun play(entry: MediaEntry, tier: QualityTier, screen: ScreenSize?): Boolean {
         played += entry to tier
+        playedScreens += screen
         playback.value = PlaybackState(item = entry, title = entry.displayTitle, isPlaying = playSucceeds, playWhenReady = playSucceeds, tier = tier)
         return playSucceeds
     }
@@ -122,8 +125,9 @@ object NoPosters : PosterSource {
     override suspend fun file(file: File): Bitmap? = null
 }
 
-class FakeQuality(var current: QualityTier = QualityTier.P720_4M) : CarQuality {
+class FakeQuality(var current: QualityTier = QualityTier.P720_4M, var screenSize: ScreenSize? = null) : CarQuality {
     override suspend fun tier() = current
+    override suspend fun screen() = screenSize
     override suspend fun setTier(tier: QualityTier) {
         current = tier
     }

@@ -1,6 +1,6 @@
 # AAFin — Architecture (Stages 1–3: foundation, car app, phone app)
 
-**What exists now:** build, signing, manifest, logo, the whole data layer (Stage 1), the **Android Auto car app** (Stage 2, §11) and the **phone app** (Stage 3, §12).
+**What exists now:** build, signing, manifest, logo, the whole data layer (Stage 1), the **Android Auto car app** (Stage 2, §11), the **phone app** (Stage 3, §12) and **automatic quality / anti-lag playback** (§13).
 
 Read `docs/SPEC.md` first. This file is the **contract between the data layer and the UI stages**.
 
@@ -36,7 +36,9 @@ app.aafin
     │                   JellyfinClients, JellyfinRepository, JellyfinUrls, Models, JellyfinException
     ├── playback/       QualityTier, DeviceProfileBuilder, PlaybackPlan, PlaybackDecision,
     │                   PlaybackResolver, MediaItems, AuthHeaderInterceptor, ProgressReporter,
-    │                   PositionSyncWorker, PlaybackController
+    │                   PositionSyncWorker, PlaybackController,
+    │                   AutoQuality (PictureSize, AutoLevel, AutoQualityTracker, StreamLimits),
+    │                   Throughput (ThroughputTracker, MeasuredThroughput)              ← §13
     ├── downloads/      DownloadMetadata(+Store), DownloadEnvironment, DownloadRepo, AAFinDownloadService
     └── profiles/       CarProfile, CarProfileStore
 ```
@@ -54,6 +56,7 @@ app.aafin
 | `playback` | `PlaybackController` | the single player + its state |
 | `downloads` | `DownloadRepo` | enqueue / list / delete downloads |
 | `phoneSettings` | `PhoneSettingsStore` | phone-only settings (setup checklist seen) |
+| `throughput` | `MeasuredThroughput` | measured download speed for Auto quality (§13.3); owns the player's bandwidth meter |
 | `appScope` | `CoroutineScope` | process-lifetime, main dispatcher |
 | `playbackResolver`, `progressReporter`, `downloadEnvironment`, `jellyfinClients`, `mediaHttpClient`, `codecCapabilities` | — | plumbing; UI should not need them |
 
@@ -104,9 +107,10 @@ app.aafin
 ### 4.4 Playback — `PlaybackController` (`graph.playback`, main thread)
 
 - **`player: ExoPlayer`** — created on first access. Stage 2: `playerView.player = graph.playback.player`.
-- **`state: StateFlow<PlaybackState>`** — `item`, `title`, `positionMs`, `durationMs`, `isPlaying`, `playWhenReady` (what a play/pause button should show), `isBuffering`, `isLoading`, `isEnded`, `error: PlaybackError?`, `playMethod`, `tier`, `audioTracks`, `subtitleTracks`, `audioStreamIndex`, `subtitleStreamIndex`, `isOffline`. Position refreshes once a second.
-- **Start:** `suspend play(entry, tier, startPositionMs = entry.resumePositionMs): Boolean`
+- **`state: StateFlow<PlaybackState>`** — `item`, `title`, `positionMs`, `durationMs`, `isPlaying`, `playWhenReady` (what a play/pause button should show), `isBuffering`, `isLoading`, `isEnded`, `error: PlaybackError?`, `playMethod`, `tier`, `autoQuality` (what Auto is using, e.g. "480p · 2.5 Mbps"), `qualityNotice` (a few seconds of "Lowering quality…"), `audioTracks`, `subtitleTracks`, `audioStreamIndex`, `subtitleStreamIndex`, `isOffline`. Position refreshes once a second.
+- **Start:** `suspend play(entry, tier, startPositionMs = entry.resumePositionMs, screen: ScreenSize? = null): Boolean`
   - Plays a **completed download if one exists**, else streams within `tier`.
+  - `screen` = the car's surface size: transcodes are never larger than it can show (§13.2).
   - Returns false and sets `state.error` on failure (does not throw).
 - **Transport:** `pause()`, `resume()`, `togglePlayPause()`, `seekBy(±ms)`, `seekTo(ms)`, `stop()`.
 - **Options (each `suspend`, each throws `JellyfinException` and leaves playback untouched on failure):**
@@ -118,12 +122,19 @@ app.aafin
   - Audio focus, pause on unplug, wake lock, `MediaSession` (no `MediaSessionService`).
   - Progress reports: start, every 10 s, on pause/resume/seek, on stop, on end.
   - **Decoder failure on direct play → one automatic retry as a transcode.**
+  - **With `QualityTier.AUTO`: stalls step the quality down, a long clean run steps it back up** (§13.4). Fixed tiers never change by themselves.
   - Reaching the end reports the full length (server marks it watched).
 - **Stage 2 must call `stop()` when the car session is destroyed.**
 
 ### 4.5 Quality — `QualityTier`
 
-`P480_2M`, `P720_4M` (**`DEFAULT`**), `P1080_8M`, `P1080_15M`, `ORIGINAL`. Each has `label`, `maxBitrate`, `maxWidth`.
+`AUTO` (**`DEFAULT`**, "Auto (recommended)"), `P480_2M`, `P720_4M`, `P1080_8M`, `P1080_15M`, `ORIGINAL`. Each has `label`, `maxBitrate`, `maxWidth` (both null for `AUTO` and `ORIGINAL`).
+
+- `AUTO` has no fixed numbers: see §13.
+- Stored by name through `QualityTierSerializer`; **a name this version does not know is read as `AUTO`** rather than failing the whole file.
+- What is actually sent to the server is a **`StreamLimits`** (`maxBitrate`, `directPlayMaxWidth`, `transcodeSize`), carried in `PlaybackRequest.limits`:
+  - `StreamLimits.forTier(tier)` — the tier alone (downloads; the default);
+  - `StreamLimits.forCar(tier, screen, autoLevel)` — with the car's screen ceiling (what `PlaybackController` uses).
 
 ### 4.6 Car profiles — `CarProfileStore`
 
@@ -132,6 +143,10 @@ app.aafin
 - `profile(key): Flow<CarProfile?>`, `profiles: Flow<List<CarProfile>>`, `rename`, `setQuality`, `remove`.
 - `markUsed(key)` — stamps `CarProfile.lastUsedAtMs`; the car session calls it on every connection ("Last used" on the phone).
 - `defaultQuality: Flow<QualityTier>` / `setDefaultQuality` — the Settings screen's "default quality"; applied to newly seen cars.
+- `setScreen(key, widthPx, heightPx)` → `CarProfile.screen: ScreenSize?` — the surface size the car last gave us (used until this connection's surface arrives).
+- **Files from before Auto** (`CarProfilesState.upToDate()`, applied on every read and write, once):
+  - every existing car **keeps the quality it had**;
+  - the default for new cars moves to Auto **only if it was still the old built-in default** (720p) — a default the user had changed is kept.
 
 ### 4.7 Downloads — `DownloadRepo` (`graph.downloads`, main thread)
 
@@ -165,7 +180,7 @@ app.aafin
 
 - Direct play: `mp4,m4v,mov,mkv,webm,ts,mpegts`; h264/hevc/vp9/av1 and aac/mp3/opus/flac/vorbis/ac3/eac3 **only if `MediaCodecList` has a decoder**.
 - Transcode: **HLS, MPEG-TS segments, h264 + stereo aac** (same as the official Android TV client).
-- Caps: bitrate from the tier; width via a `CodecProfile` condition (`Width ≤ maxWidth`); h264 limited to 8-bit.
+- Caps (from the request's `StreamLimits`): bitrate; direct-play width via a `CodecProfile` condition (`Width ≤ maxWidth`); transcode size via conditions on the `TranscodingProfile` (§13.2); h264 limited to 8-bit.
 - Subtitles: `srt/subrip/vtt/webvtt/ass/ssa` → External (side-loaded); `pgs/pgssub/dvdsub/dvbsub` → Encode (burned in).
 
 **Progress reports** (`ProgressReporter`)
@@ -271,17 +286,19 @@ app.aafin
 | File | Covers |
 |---|---|
 | `ServerUrlTest` | URL normalisation, HTTPS/HTTP rule, server compatibility |
-| `QualityAndTicksTest` | tier → bitrate/width, ticks ↔ ms, device profile |
+| `QualityAndTicksTest` | tier → bitrate/width, ticks ↔ ms, device profile, **`StreamLimits` and the size conditions they produce** |
+| `AutoQualityTest` | **the Auto policy**: screen → picture ceiling, estimate → start cap (70 %, clamps, ceiling, no estimate), the ladder and its floor, stall rules (two in 60 s, one over 5 s; first load, seeks and pauses excluded), step-up after 10 clean minutes, hysteresis, carry-over to the next item |
+| `ThroughputTrackerTest` | which bandwidth-meter reports count as measurements, per kind of network; what is saved for a cold start |
 | `PlaybackDecisionTest` | PlaybackInfo → direct play / direct stream / transcode, subtitles, errors |
 | `AuthRepositoryTest` | Quick Connect state machine (success, disabled, timeout, cancel, blips), password, `findServer` |
-| `StoresTest` | car profiles get-or-create, accounts, download metadata JSON |
+| `StoresTest` | car profiles get-or-create, accounts, download metadata JSON, **tier storage and the pre-Auto file migration** |
 | `ProgressReporterTest` | report queueing, URL building, auth-header host rule |
-| `JellyfinSdkIntegrationTest` | the **real SDK against a local fake server** (MockWebServer): request paths, auth header, request bodies (device profile, ticks), JSON decoding into app models |
+| `JellyfinSdkIntegrationTest` | the **real SDK against a local fake server** (MockWebServer): request paths, auth header, request bodies (device profile, ticks, **bitrate cap and max width/height for a car screen**), JSON decoding into app models |
 
 | `car/CarLogicTest` | template budget, paging, row text, series layout, next episode, car key, seek gesture, surface insets |
-| `car/CarProfileSessionTest` | car detection: model → screen → unknown, timeouts, quality read/write |
+| `car/CarProfileSessionTest` | car detection: model → screen → unknown, timeouts, quality read/write, screen size kept and saved |
 | `car/CarBrowseScreensTest` | **Robolectric + `app-testing`**: Home (signed out, error, overflow), Library (empty, paging, error), Series, Downloads, Search, Accounts, budget restart |
-| `car/CarPlayerScreensTest` | player strips, error/retry, stop on exit, next-episode countdown, options and choices |
+| `car/CarPlayerScreensTest` | player strips, error/retry, stop on exit, next-episode countdown, options and choices, **Auto first with what it is using** |
 | `car/VideoSurfaceLifecycleTest` | **Robolectric**, the real renderer: surface available → destroyed (as a real host sends it) → available again; destroyed twice / first; nothing after release |
 
 | `phone/PhoneLogicTest` | download size estimates, the Original / 720p options, formatting, car key wording, server warnings, stale-token detection |
@@ -290,7 +307,8 @@ app.aafin
 
 - Car screen tests run against `FakeBackend` (`car/CarFakes.kt`) — no server, no head unit.
 - Phone tests run against `FakePhone` (`src/sharedTest/…/phone/PhoneFakes.kt`, shared with the on-device tests).
-- **230 unit tests** in total (84 data layer + 89 car + 57 phone).
+- **292 unit tests** in total (141 data layer + 94 car + 57 phone).
+- `PlaybackController` itself has no JVM test (it needs a real ExoPlayer): its Auto behaviour is `AutoQualityTracker` (fully tested) plus thin wiring, checked on the DHU (§13.8).
 
 **On-device tests:** `gradlew.bat connectedDebugAndroidTest` — `GraphSmokeTest` (Stage 1), **`VideoSurfaceRendererTest`** (§11.4), **`PhoneUiTest`** (§12.8) and **`MainThreadNetworkTest`** (§7.12) — 24 in total.
 
@@ -339,6 +357,9 @@ app.aafin
 The next episode comes from the server's episode list, or from the downloads when the server cannot be reached.
 
 **Quality:** chosen in Options → saved to **this car's profile** (`CarProfileStore.setQuality`) → `PlaybackController.setQuality` re-resolves at the same position.
+
+- **"Auto (recommended)" is first in the list.** Its second line says what Auto is using ("Auto · 480p · 2.5 Mbps"), or "Follows your connection and this screen" while a fixed quality is selected.
+- The Options screen's Quality row shows the same ("Auto · 480p · 2.5 Mbps") and follows step-downs live.
 
 ### 11.3 Android Auto's limits, and how each is handled
 
@@ -439,6 +460,7 @@ The next episode comes from the server's episode list, or from the downloads whe
   2. else the first surface (3 s timeout) → key `screen:WxH@dpi`;
   3. else `screen:unknown`.
 - `CarProfileStore.getOrCreate(key, name)` → the profile's quality tier is read **each time something is played**, so a change on the phone applies to the next item.
+- **Screen size:** every surface the renderer is given is remembered (`CarQuality.screen()`) and saved on the profile; `PlayerScreen` passes it to `play`. Before this connection's surface arrives, the size saved last time is used.
 - **Wired and wireless are identical:** both the model and the surface come from the head unit, not the transport.
 
 ### 11.9 Known risks (check these on the DHU and the car first)
@@ -470,7 +492,7 @@ The next episode comes from the server's episode list, or from the downloads whe
 |---|---|
 | `AAFin/Car` | session start/end, car profile, account changes, load failures, budget restarts |
 | `AAFin/Surface` | surface available/destroyed with size, visible/stable area, window shown, taps, drags |
-| `AAFin/Playback` | what is asked to play and at which quality, next episode, option changes |
+| `AAFin/Playback` | what is asked to play and at which quality, next episode, option changes; **every quality decision** (§13.7): screen, estimate, chosen cap, each stall, each step down/up, the size of the video that actually arrived |
 | `AAFin.Playback` | Stage 1's `PlaybackController` (player errors by code) |
 
 `adb logcat -s AAFin/Car AAFin/Surface AAFin/Playback AAFin.Playback`
@@ -607,3 +629,151 @@ Stage 1 risk: a 720p download's address has the access token inside it (`ApiKey=
 | `MainActivity` rewritten; `AAFinTheme` moved to `phone/ui/Theme.kt`; `phone_placeholder_message` removed; manifest `windowSoftInputMode="adjustResize"` | The real phone app |
 | Build: `ui-test-junit4` (androidTest), `ui-test-manifest` (debug only), `src/sharedTest/java` source dir; `InMemoryDataStore` moved there | Compose UI tests and shared fakes |
 | New drawable `ic_phone_car` | Cars tab icon |
+
+---
+
+## 13. Automatic quality and buffering (v1.5)
+
+### 13.1 What it is for
+
+**Android Auto re-encodes the car surface itself**, at the head unit's resolution — so the phone-to-car link (wired or wireless) costs the same whatever AAFin plays. The lag AAFin can do something about:
+
+| Cause | Fix |
+|---|---|
+| Mobile-data throughput to the Jellyfin server (stalls) | **Auto** picks the bitrate from a throughput estimate and steps down when playback stalls (§13.3, §13.4) |
+| More pixels than the car screen can show | **Screen ceiling** on every transcode (§13.2) |
+| Too small a buffer to ride out 5G dips | **Deeper buffer** (§13.5) |
+
+All of the policy is **pure Kotlin in `AutoQuality.kt`** (unit-tested); `PlaybackController` only feeds it player events and carries out what it decides.
+
+### 13.2 Screen ceiling (every tier except Original)
+
+- **Rule:** a transcode is never requested larger than the car screen can show. The ceiling is the **smallest standard size that still fills the screen** (`PictureSize.forScreen`): a 16:9 picture is fitted to the surface and the next size up is taken.
+
+| Surface | 16:9 picture on it | Ceiling |
+|---|---|---|
+| 800×400 (desktop head unit) | 711×400 | **854×480** |
+| 1024×600 | 1024×576 | 1280×720 |
+| 1280×720, 1280×800, 1920×720 | 1280×720 | 1280×720 |
+| 1920×1080 or larger | 1920×1080 | 1920×1080 |
+| unknown | — | **1280×720** |
+
+- A fixed tier never asks for more than itself: 480p stays 480p on a big screen; 1080p becomes 480p on an 800×400 one (**its bitrate cap is unchanged**).
+- **Direct play is not refused because of the screen.** A file within the bitrate cap (and, for fixed tiers, the tier's width as before) still plays untouched: no server load, and the bitrate is what matters on mobile data. The ceiling only shapes video the server is re-encoding anyway.
+- Downloads are unaffected (`StreamLimits.forTier`).
+
+**How Jellyfin is told — verified against the server source at tag `v12.4`:**
+
+| Finding | Where |
+|---|---|
+| The PlaybackInfo request has **no `MaxWidth` / `MaxHeight`** field | `Jellyfin.Api/Models/MediaInfoDtos/PlaybackInfoDto.cs` |
+| `Width` / `Height` "LessThanEqual" conditions become the stream's `MaxWidth` / `MaxHeight` (the smallest wins) | `StreamBuilder.ApplyTranscodingConditions` |
+| Conditions on the **`TranscodingProfile`** are applied when the video is transcoded for a video or bitrate reason — and play no part in the direct-play decision | `StreamBuilder.BuildVideoItem` (`transcodingProfile.Conditions`); the class comment on `TranscodingProfile` tells client developers that codec-profile conditions take priority over these |
+| Conditions on a **`CodecProfile`** are applied to every transcode, and also decide direct play | `StreamBuilder.BuildStreamVideoItem` |
+| The limits are written into the transcoding URL (`&MaxWidth=…&MaxHeight=…`), which the HLS endpoints accept and the encoder scales to | `StreamInfo.ToUrl`, `DynamicHlsController`, `EncodingHelper` |
+| The server also lowers the width by itself when it lowers the bitrate (≤ 1.1 Mbps → 768, ≤ 3 → 960, ≤ 6 → 1280, ≤ 13.5 → 1920) | `ResolutionNormalizer` |
+
+So `DeviceProfileBuilder` sends:
+
+1. **always:** the ceiling as `Width ≤ w`, `Height ≤ h` conditions on the transcoding profile;
+2. **for a forced transcode** (`forceTranscode`: decoder fallback, 720p downloads): the same limits as a codec condition, which the server applies whatever the reason for the transcode;
+3. **burned-in subtitles:** the server's reason is then "subtitle", not "video", so case 1 would not apply. `PlaybackResolver.planOnline` therefore asks a second time as a forced transcode (one extra request, only when a picture subtitle is selected on a car screen).
+
+**Not verified against the live server** (no credentials on this PC): the proof on the DHU is the log line `Video size 854x480` (§13.8).
+
+### 13.3 Auto: where it starts
+
+- **Estimate:** Media3's process-wide `DefaultBandwidthMeter` (`MeasuredThroughput`), given to the player explicitly. It watches every byte the player loads, so the estimate carries over from one item to the next.
+- **Only real measurements count** (`ThroughputTracker`). The meter always has a number — before measuring, and after every change of network type, it is a built-in guess per country and network. A report is used only once 2 s or 512 kB have been measured **on the current kind of network** (the meter's own threshold).
+- **Cold start:** the last good value is saved to `throughput.json` (at most every 30 s) with its network type, and used only on the same kind of network — a Wi-Fi measurement says nothing about 5G.
+- **Start cap** (`AutoQuality.startLevel`):
+
+| Step | Number |
+|---|---|
+| Share of the estimate used | **70 %** |
+| Kept between | **1.5 Mbps** and **8 Mbps** |
+| Never above what the screen can use | 480p screen **2.5 Mbps** · 720p **4 Mbps** · 1080p **8 Mbps** |
+| No estimate | **3 Mbps** (2.5 Mbps on a 480p screen) |
+
+- **Picture size for a bitrate** (never above the screen ceiling): below 1.5 Mbps → 360p · below 3.5 → 480p · below 7 → 720p · else 1080p. This mirrors the server's own table, so the label shown is what arrives.
+- Auto has **no width rule for direct play**: any file within the bitrate cap plays as it is.
+
+### 13.4 Auto: stepping down and back up (`AutoQualityTracker`)
+
+- **Ladder:** 1 · 1.5 · 2.5 · 4 · 6 · 8 Mbps. **Floor: 1 Mbps at 360p.**
+- **A stall** = the player runs out of data (`STATE_BUFFERING`) while it should be playing. **Not stalls:** the first load of any stream, the wait after a seek, buffering while paused.
+
+| Rule | Number |
+|---|---|
+| Step down after | **2 stalls within 60 s**, or **one stall longer than 5 s** |
+| Step down by | one ladder step; a direct-played file goes straight to the first step **below its own bitrate**, because only that makes the server transcode |
+| Step back up after | **10 minutes of playing with no stall** (paused time does not count), one step at a time |
+| Step-up limit | never above where this item would have started; only if 70 % of the current estimate covers the higher step |
+| Hysteresis | a level that was stepped up to and stalled again is **not tried again for this item** |
+| Next item | a step down made in the last 10 minutes carries over, so the next episode does not start too high; it may climb back |
+
+- **A change** = `PlaybackController.restartStream` with new limits: same item, position, audio and subtitle. The overlay says **"Lowering quality to keep playing smoothly"** (or "Connection is steady again: raising quality") for 6 s.
+- Decisions are proposals: nothing else is proposed until the controller reports `applied` or `failed`. If the server cannot be reached the old stream carries on and the change is tried again after another 5 s of stalling.
+- **Fixed tiers never change by themselves** — the tracker is only consulted for an Auto stream.
+
+### 13.5 Buffer (`DefaultLoadControl`, streaming only)
+
+| Setting | Value | Media3 default | Why |
+|---|---|---|---|
+| Buffer at least | **30 s** | 50 s | loading resumes when the buffer drops to this: a 30 s dip in mobile data is ridden out |
+| Buffer at most | **120 s** | 50 s | two minutes of cover after a good stretch of signal; loading in bursts is also kinder to the radio |
+| Before first frame / after a seek | **2.5 s** | 1 s | an HLS segment is several seconds long, so the first one already covers it: a transcode starts as quickly as before, while a direct-played file gets a little more in hand |
+| After a rebuffer | **5 s** | 2 s | restart with enough in hand not to stall again at once; a link that cannot deliver 5 s of video in 5 s also trips the "stall longer than 5 s" rule, which is the right answer |
+
+- **Memory:** the size limit is left at Media3's default (about 130–144 MB) and **time is not prioritised over size**. At Auto's highest cap, 120 s × 8 Mbps = 120 MB fits; an "Original" file at tens of Mbps simply buffers fewer seconds instead of exhausting the Java heap (which a time-first buffer would risk: 30 s at 80 Mbps is 300 MB).
+- Only the streaming values are set (`setBufferDurationsMsForStreaming`), leaving Media3's local-file defaults alone. Downloads are read through the cache with their `https` address, so they count as streaming too — harmless, they load at disk speed.
+
+### 13.6 What the user sees
+
+- **Car:** Options → Quality (§11.2). The notice over the picture when Auto changes level.
+- **Phone:** Cars → Quality and Settings → "Default quality for new cars" both list **Auto (recommended)** first. New cars start on Auto.
+- **An existing car keeps the quality it had** (§4.6) — choose Auto for it in the car's Options or on the phone's Cars tab.
+
+### 13.7 Logging (`AAFin/Playback`; never a URL or token)
+
+```
+Auto quality: screen 800x400 (ceiling 480p), estimate 6.2 Mbps, starting at 480p · 2.5 Mbps (854x480)
+Quality P720_4M: screen 800x400, cap 4 Mbps, transcodes up to 854x480
+Video size 854x480
+Auto quality: playback stalled (1 in the last 60 s)
+Auto quality: stepping down from 480p · 2.5 Mbps to 480p · 1.5 Mbps after 2 stalls within 60 s (was TRANSCODE)
+Auto quality: stepping up from 480p · 1.5 Mbps to 480p · 2.5 Mbps after 10 min without a stall (was TRANSCODE)
+Auto quality: a stall longer than 5 s, but there is nothing lower than 360p · 1 Mbps to try
+Auto quality: could not change level (NETWORK); staying at 480p · 2.5 Mbps
+```
+
+### 13.8 Check on the DHU and in the car
+
+1. **Existing car profile:** it is still on its old quality. Options → Quality → **Auto (recommended)**.
+2. **Start:** the `Auto quality: screen … starting at …` line, then `Video size …` no larger than the ceiling (a direct-played file shows its own size — that is intended).
+3. **Fixed tier:** 1080p · 8 Mbps on the 800×400 DHU → `transcodes up to 854x480` and, for a file that needs transcoding, `Video size` ≤ 854×480.
+4. **Step down:** throttle the phone's connection while an Auto transcode plays → two `playback stalled` lines → `stepping down` → the notice on the picture → Options shows the new level.
+5. **Seeks do not count:** seek around repeatedly — no `playback stalled` lines.
+
+### 13.9 Risks and limits
+
+1. **The server's side of the ceiling is verified from source, not on the live server.** If `Video size` is ever larger than the ceiling for a transcode, the conditions are not being honoured — the fallback is to rewrite `MaxWidth` / `MaxHeight` on the transcoding URL (the HLS endpoints take them as query parameters).
+2. **The estimate is weak for direct-played files.** Media3 measures per transfer, and a direct-played file is one long transfer that idles when the buffer is full. HLS transcodes (a transfer per segment) measure well. A poor estimate only affects where Auto *starts*; stalls correct it.
+3. **5G that reports as 4G:** telling 5G (non-standalone) from 4G needs the phone-state permission, which AAFin does not ask for. Both then count as one kind of network — consistent, so harmless.
+4. **A step up restarts the stream** (a few seconds of buffering). That is why it needs 10 clean minutes, room in the estimate, and is never repeated at a level that failed.
+5. **Ultra-wide screens** (e.g. 1920×720): the ceiling is sized for a 16:9 picture (720p), so a 2.39:1 film is scaled up slightly to fill the width.
+6. **A slow transcoder looks like a slow network** (stalls after a seek has finished). Stepping down lightens the transcode too, so the response is still the right one.
+
+### 13.10 Changes to earlier stages
+
+| Change | Why |
+|---|---|
+| `QualityTier.AUTO` (new default) + `QualityTierSerializer` | the Auto choice; unknown stored names no longer fail the file |
+| `PlaybackRequest.limits` (`StreamLimits`), `PlaybackPlan.sourceBitrate`; `DeviceProfileBuilder.build(limits, …)` | what is sent to the server is no longer just the tier |
+| `PlaybackResolver.planOnline`: second request for burned-in subtitles on a car screen | §13.2 case 3 |
+| `PlaybackController`: `play(…, screen)`, load control, shared bandwidth meter, stall hooks, `autoQuality` / `qualityNotice` in the state; constructor takes `bandwidthMeter`, `throughput`, `clock` | §13.3–13.5 |
+| `AppGraph.throughput` (`throughput.json`) | the estimate and its saved copy |
+| `CarProfile.screenWidthPx/HeightPx`, `CarProfileStore.setScreen`, `CarProfilesState.autoDefaultApplied` + `upToDate()` | screen ceiling; one-off move of the default to Auto |
+| `CarBackend.play(entry, tier, screen)`, `CarQuality.screen()`; `CarProfileSession` keeps the latest surface | the car side passes its screen size |
+| `VideoSurfaceRenderer`: shows `state.qualityNotice`; Options / `ChoiceScreen`: Auto row and its second line | UI |
+| Phone: `qualityNote(AUTO)`; 720p is no longer labelled "Recommended" | UI |

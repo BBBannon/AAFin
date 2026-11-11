@@ -13,6 +13,7 @@ import app.aafin.data.jellyfin.MediaEntry
 import app.aafin.data.jellyfin.Page
 import app.aafin.data.playback.PlaybackState
 import app.aafin.data.playback.QualityTier
+import app.aafin.data.playback.ScreenSize
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
 import java.io.File
@@ -42,7 +43,8 @@ interface CarBackend {
     val downloads: StateFlow<List<DownloadedItem>>
 
     val playback: StateFlow<PlaybackState>
-    suspend fun play(entry: MediaEntry, tier: QualityTier): Boolean
+    /** @param screen the car's screen size if known, so the stream is no larger than it can show. */
+    suspend fun play(entry: MediaEntry, tier: QualityTier, screen: ScreenSize?): Boolean
     fun togglePlayPause()
     fun seekBy(deltaMs: Long)
     fun stop()
@@ -71,7 +73,7 @@ class GraphCarBackend(private val graph: AppGraph) : CarBackend {
     override val downloads: StateFlow<List<DownloadedItem>> = graph.downloads.downloads
 
     override val playback: StateFlow<PlaybackState> get() = graph.playback.state
-    override suspend fun play(entry: MediaEntry, tier: QualityTier) = graph.playback.play(entry, tier)
+    override suspend fun play(entry: MediaEntry, tier: QualityTier, screen: ScreenSize?) = graph.playback.play(entry, tier, screen = screen)
     override fun togglePlayPause() = graph.playback.togglePlayPause()
     override fun seekBy(deltaMs: Long) = graph.playback.seekBy(deltaMs)
     override fun stop() = graph.playback.stop()
@@ -115,10 +117,13 @@ interface PosterSource {
     suspend fun file(file: File): Bitmap?
 }
 
-/** The quality tier of the car we are connected to (its car profile). */
+/** The quality tier and screen size of the car we are connected to (its car profile). */
 interface CarQuality {
     suspend fun tier(): QualityTier
     suspend fun setTier(tier: QualityTier)
+
+    /** The car's drawing surface: this connection's if one has arrived, else the size saved last time; null if never seen. */
+    suspend fun screen(): ScreenSize?
 }
 
 /** The part of the video surface the screens talk to. */

@@ -87,6 +87,7 @@ object PlaybackDecision {
             subtitleStreamIndex = selectedSubtitle?.index,
             subtitleBurnedIn = burnIn,
             runtimeMs = source.runTimeTicks?.let(Ticks::toMs),
+            sourceBitrate = source.bitrate,
         )
     }
 

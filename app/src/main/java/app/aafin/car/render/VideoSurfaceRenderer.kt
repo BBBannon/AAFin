@@ -259,7 +259,7 @@ class VideoSurfaceRenderer(
             positionMs = state.positionMs,
             durationMs = state.durationMs,
             overlayVisible = overlayTimed || !OverlayRule.mayAutoHide(state.isPlaying),
-            notice = seekPreview ?: state.error?.message ?: notice ?: if (state.isLoading) "Loading…" else null,
+            notice = seekPreview ?: state.error?.message ?: notice ?: state.qualityNotice ?: if (state.isLoading) "Loading…" else null,
         )
     }
 

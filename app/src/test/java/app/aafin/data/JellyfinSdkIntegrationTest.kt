@@ -14,14 +14,18 @@ import app.aafin.data.jellyfin.SdkAuthGateway
 import app.aafin.data.jellyfin.SourceInfo
 import app.aafin.data.jellyfin.ServerCompatibility
 import app.aafin.data.playback.AuthHeaderInterceptor
+import app.aafin.data.playback.AutoLevel
 import app.aafin.data.playback.CodecCapabilities
+import app.aafin.data.playback.PictureSize
 import app.aafin.data.playback.PlayMethod
 import app.aafin.data.playback.PlaybackRequest
 import app.aafin.data.playback.PlaybackResolver
 import app.aafin.data.playback.PlaybackSnapshot
 import app.aafin.data.playback.QualityTier
 import app.aafin.data.playback.QueuedPosition
+import app.aafin.data.playback.ScreenSize
 import app.aafin.data.playback.SdkPlaystateGateway
+import app.aafin.data.playback.StreamLimits
 import app.aafin.testing.InMemoryDataStore
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
@@ -108,7 +112,10 @@ class JellyfinSdkIntegrationTest {
            "IsForced":false,"IsHearingImpaired":false,"IsExternal":false,"IsTextSubtitleStream":false,"SupportsExternalStream":false},
           {"Codec":"subrip","Type":"Subtitle","Index":2,"Language":"eng","DisplayTitle":"English - SRT","IsInterlaced":false,"IsDefault":false,
            "IsForced":false,"IsHearingImpaired":false,"IsExternal":false,"IsTextSubtitleStream":true,"SupportsExternalStream":true,
-           "DeliveryMethod":"External","DeliveryUrl":"/Videos/$movieIdDashed/$movieId/Subtitles/2/0/Stream.srt?ApiKey=tok-123","IsExternalUrl":false}
+           "DeliveryMethod":"External","DeliveryUrl":"/Videos/$movieIdDashed/$movieId/Subtitles/2/0/Stream.srt?ApiKey=tok-123","IsExternalUrl":false},
+          {"Codec":"pgssub","Type":"Subtitle","Index":3,"Language":"fra","DisplayTitle":"French - PGS","IsInterlaced":false,"IsDefault":false,
+           "IsForced":false,"IsHearingImpaired":false,"IsExternal":false,"IsTextSubtitleStream":false,"SupportsExternalStream":false,
+           "DeliveryMethod":"Encode"}
         ]}],"PlaySessionId":"ps1"}"""
 
     @Before
@@ -351,6 +358,85 @@ class JellyfinSdkIntegrationTest {
             .single { it.getValue("Property").jsonPrimitive.content == "Width" }
         assertEquals("LessThanEqual", widthCondition.getValue("Condition").jsonPrimitive.content)
         assertEquals("1280", widthCondition.getValue("Value").jsonPrimitive.content)
+    }
+
+    private fun playbackInfoBodies(): List<JsonObject> = requests
+        .filter { it.requestUrl!!.encodedPath.endsWith("/PlaybackInfo") }
+        .map { Json.parseToJsonElement(it.body.clone().readUtf8()).jsonObject }
+
+    /** Width and height limits ("LessThanEqual") found in a list of profiles' conditions. */
+    private fun sizeLimits(profiles: List<JsonObject>): Map<String, String> = profiles
+        .flatMap { it.getValue("Conditions").jsonArray }
+        .map { it.jsonObject }
+        .filter { it.getValue("Condition").jsonPrimitive.content == "LessThanEqual" }
+        .associate { it.getValue("Property").jsonPrimitive.content to it.getValue("Value").jsonPrimitive.content }
+        .filterKeys { it == "Width" || it == "Height" }
+
+    @Test
+    fun `an Auto request for a car screen carries the bitrate cap and the max width and height`() = runBlocking {
+        signIn()
+        val resolver = PlaybackResolver(clients, accounts, CodecCapabilities { true })
+        val limits = StreamLimits.forCar(QualityTier.AUTO, ScreenSize(800, 400), AutoLevel(2_500_000, PictureSize.P480))
+
+        resolver.planOnline(PlaybackRequest(movieIdDashed, QualityTier.AUTO, limits = limits))
+
+        val body = playbackInfoBodies().single()
+        assertEquals(2_500_000, body.getValue("MaxStreamingBitrate").jsonPrimitive.int)
+        assertTrue(body.getValue("EnableDirectPlay").jsonPrimitive.boolean)
+        val profile = body.getValue("DeviceProfile").jsonObject
+        assertEquals(2_500_000, profile.getValue("MaxStreamingBitrate").jsonPrimitive.int)
+        assertEquals(2_500_000, profile.getValue("MaxStaticBitrate").jsonPrimitive.int)
+        // The ceiling for re-encoded video: conditions on the transcoding profile.
+        val transcoding = profile.getValue("TranscodingProfiles").jsonArray.map { it.jsonObject }
+        assertEquals(mapOf("Width" to "854", "Height" to "480"), sizeLimits(transcoding))
+        // Auto does not refuse direct play by size: a file within the bitrate plays as it is.
+        assertTrue(sizeLimits(profile.getValue("CodecProfiles").jsonArray.map { it.jsonObject }).isEmpty())
+    }
+
+    @Test
+    fun `a fixed tier on a small car screen keeps its bitrate and caps the transcode to the screen`() = runBlocking {
+        signIn()
+        val resolver = PlaybackResolver(clients, accounts, CodecCapabilities { true })
+        val limits = StreamLimits.forCar(QualityTier.P1080_8M, ScreenSize(800, 400))
+
+        resolver.planOnline(PlaybackRequest(movieIdDashed, QualityTier.P1080_8M, limits = limits))
+
+        val body = playbackInfoBodies().single()
+        assertEquals(8_000_000, body.getValue("MaxStreamingBitrate").jsonPrimitive.int)
+        val profile = body.getValue("DeviceProfile").jsonObject
+        assertEquals(mapOf("Width" to "854", "Height" to "480"), sizeLimits(profile.getValue("TranscodingProfiles").jsonArray.map { it.jsonObject }))
+        assertEquals(mapOf("Width" to "1920"), sizeLimits(profile.getValue("CodecProfiles").jsonArray.map { it.jsonObject }))
+    }
+
+    @Test
+    fun `a burned-in subtitle on a car screen is asked for again as a forced transcode so the ceiling applies`() = runBlocking {
+        signIn()
+        val resolver = PlaybackResolver(clients, accounts, CodecCapabilities { true })
+        val limits = StreamLimits.forCar(QualityTier.AUTO, ScreenSize(800, 400), AutoLevel(2_500_000, PictureSize.P480))
+
+        val plan = resolver.planOnline(PlaybackRequest(movieIdDashed, QualityTier.AUTO, subtitleStreamIndex = 3, limits = limits))
+
+        assertTrue(plan.subtitleBurnedIn)
+        assertTrue(plan.request.forceTranscode)
+        val bodies = playbackInfoBodies()
+        assertEquals(2, bodies.size)
+        assertTrue(bodies.first().getValue("EnableDirectPlay").jsonPrimitive.boolean)
+        val second = bodies.last()
+        assertFalse(second.getValue("EnableDirectPlay").jsonPrimitive.boolean)
+        assertEquals(3, second.getValue("SubtitleStreamIndex").jsonPrimitive.int)
+        assertEquals(2_500_000, second.getValue("MaxStreamingBitrate").jsonPrimitive.int)
+        val codecProfiles = second.getValue("DeviceProfile").jsonObject.getValue("CodecProfiles").jsonArray.map { it.jsonObject }
+        assertEquals(mapOf("Width" to "854", "Height" to "480"), sizeLimits(codecProfiles))
+    }
+
+    @Test
+    fun `without a car screen a burned-in subtitle needs no second request`() = runBlocking {
+        signIn()
+        val resolver = PlaybackResolver(clients, accounts, CodecCapabilities { true })
+
+        resolver.planOnline(PlaybackRequest(movieIdDashed, QualityTier.P720_4M, subtitleStreamIndex = 3))
+
+        assertEquals(1, playbackInfoBodies().size)
     }
 
     @Test

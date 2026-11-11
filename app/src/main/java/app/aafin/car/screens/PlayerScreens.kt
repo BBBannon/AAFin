@@ -99,8 +99,9 @@ class PlayerScreen(
         // Shown at once: working out the car's profile and asking the server can take a moment.
         env.overlay.setNotice("Loading…")
         val tier = env.quality.tier()
+        val screen = env.quality.screen()
         Log.i(CarLog.PLAYBACK, "Play ${entry.kind} ${entry.id} at $tier from ${entry.resumePositionMs / 1000} s")
-        started = env.backend.play(entry, tier)
+        started = env.backend.play(entry, tier, screen)
         env.overlay.setNotice(null)
         if (!started) Log.w(CarLog.PLAYBACK, "Playback did not start: ${env.backend.playback.value.error?.code}")
         env.overlay.showOverlay()
@@ -208,7 +209,7 @@ class PlayerOptionsScreen(carContext: CarContext, env: CarEnv) : CarScreen(carCo
         // The second line of each row follows the player (e.g. after a choice has been applied).
         scope.launch {
             env.backend.playback
-                .map { Triple(it.audioStreamIndex, it.subtitleStreamIndex, it.tier) }
+                .map { listOf(it.audioStreamIndex, it.subtitleStreamIndex, it.tier, it.autoQuality) }
                 .distinctUntilChanged()
                 .collect { invalidate() }
         }
@@ -231,7 +232,7 @@ class PlayerOptionsScreen(carContext: CarContext, env: CarEnv) : CarScreen(carCo
                 },
             )
             items.addItem(
-                row(QUALITY, if (state.isOffline) "Downloaded copy" else state.tier?.label ?: "", browsable = true) {
+                row(QUALITY, qualityText(state), browsable = true) {
                     if (state.isOffline) {
                         toast("This is a download, so its quality is fixed")
                     } else {
@@ -241,6 +242,13 @@ class PlayerOptionsScreen(carContext: CarContext, env: CarEnv) : CarScreen(carCo
             )
         }
         return listContent("Options", items.build(), structure = if (state.hasMedia) "options" else "empty")
+    }
+
+    /** For Auto, what it is using at the moment: "Auto, 480p, 2.5 Mbps" (with middle dots). */
+    private fun qualityText(state: PlaybackState): String = when {
+        state.isOffline -> "Downloaded copy"
+        state.autoQuality != null -> "Auto · ${state.autoQuality}"
+        else -> state.tier?.label ?: ""
     }
 
     private companion object {
@@ -267,7 +275,7 @@ class ChoiceScreen(
 
     enum class Kind(val title: String) { AUDIO("Audio"), SUBTITLES("Subtitles"), QUALITY("Quality") }
 
-    private class Choice(val title: String, val selected: Boolean, val apply: suspend () -> Unit)
+    private class Choice(val title: String, val selected: Boolean, val detail: String? = null, val apply: suspend () -> Unit)
 
     /** Taken once: the list must not reshuffle under the user's finger. */
     private val choices: List<Choice> = choices(env.backend.playback.value)
@@ -284,13 +292,17 @@ class ChoiceScreen(
                     Choice(trackName(track), track.index == state.subtitleStreamIndex) { env.backend.selectSubtitle(track.index) }
                 }
             Kind.QUALITY -> QualityTier.entries.map { tier ->
-                Choice(tier.label, tier == state.tier) {
+                Choice(tier.label, tier == state.tier, detail = if (tier == QualityTier.AUTO) autoDetail(state) else null) {
                     env.quality.setTier(tier)
                     env.backend.setQuality(tier)
                 }
             }
         }.fitTo(limit)
     }
+
+    /** The second line of the Auto row: what it is using now, or what it would do. */
+    private fun autoDetail(state: PlaybackState): String =
+        state.autoQuality?.let { "Auto · $it" } ?: "Follows your connection and this screen"
 
     /** Keeps the list within the car's limit without ever dropping the current choice. */
     private fun List<Choice>.fitTo(limit: Int): List<Choice> {
@@ -305,7 +317,11 @@ class ChoiceScreen(
             return listContent(kind.title, ItemList.Builder().setNoItemsMessage("Nothing to choose from.").build(), "empty")
         }
         val items = ItemList.Builder()
-        choices.forEach { items.addItem(Row.Builder().setTitle(it.title).build()) }
+        choices.forEach { choice ->
+            val row = Row.Builder().setTitle(choice.title)
+            choice.detail?.let(row::addText)
+            items.addItem(row.build())
+        }
         choices.indexOfFirst { it.selected }.takeIf { it >= 0 }?.let(items::setSelectedIndex)
         items.setOnSelectedListener(::choose)
         return listContent(kind.title, items.build(), structure = choices.joinToString("|") { it.title })

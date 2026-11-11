@@ -286,7 +286,7 @@ class PhoneUiTest {
         compose.awaitTag("tab-Cars")
         compose.onNodeWithTag("tab-Cars").performClick()
         compose.awaitText("Dacia Duster")
-        compose.onNodeWithText("Quality: 720p · 4 Mbps").assertExists()
+        compose.onNodeWithText("Quality: Auto (recommended)").assertExists()
         compose.onNodeWithText("Recognised by model: dacia duster 2025").assertExists()
         compose.onNodeWithText("Last used", substring = true).assertExists()
 
