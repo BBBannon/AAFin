@@ -26,6 +26,8 @@ import app.aafin.data.playback.SdkPlaystateGateway
 import app.aafin.data.playback.WorkManagerPositionQueue
 import app.aafin.data.profiles.CarProfileStore
 import app.aafin.data.profiles.CarProfilesState
+import app.aafin.data.update.GitHubUpdateSource
+import app.aafin.data.update.UpdateSource
 import app.aafin.phone.PhoneSettings
 import app.aafin.phone.PhoneSettingsStore
 import kotlinx.coroutines.CoroutineScope
@@ -92,6 +94,9 @@ class AppGraph(context: Context) {
     val mediaHttpClient: OkHttpClient by lazy {
         httpClient.newBuilder().addInterceptor(AuthHeaderInterceptor(accountStore, jellyfinClients)).build()
     }
+
+    /** Checks GitHub for a newer AAFin release. */
+    val updates: UpdateSource by lazy { GitHubUpdateSource(httpClient) }
 
     /** Server discovery and sign-in (Quick Connect and password). */
     val auth: AuthRepository by lazy { AuthRepository(SdkAuthGateway(jellyfinClients), accountStore) }

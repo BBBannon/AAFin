@@ -52,7 +52,8 @@ data class SetupStep(val title: String, val body: String, val opensAndroidAuto: 
 val SetupSteps = listOf(
     SetupStep(
         "Install AAFin",
-        "Done — AAFin is on this phone. To update it later, install the newer APK over the top; your accounts and downloads are kept.",
+        "Done — AAFin is on this phone. When a new version is out, AAFin tells you: tap the message (or Settings, then Updates) " +
+            "to download it, then open the file to install it over the top. Your accounts and downloads are kept.",
     ),
     SetupStep(
         "Allow unknown sources in Android Auto",
@@ -63,7 +64,10 @@ val SetupSteps = listOf(
     ),
     SetupStep(
         "Show AAFin in the car launcher",
-        "In the phone's Settings, go to Apps, then Android Auto, then Customise launcher, and make sure AAFin is ticked.",
+        "In the phone's Settings, go to Apps, then Android Auto, then Customise launcher, and make sure AAFin is ticked.\n\n" +
+            "Not listed? Android Auto only adds AAFin after the phone has connected to a car with Unknown sources already on. " +
+            "Disconnect from the car and connect again. Still missing? Install AAFin from a computer instead, with: " +
+            "adb install -r -i com.android.vending AAFin.apk",
     ),
     SetupStep(
         "Sign in to Jellyfin",

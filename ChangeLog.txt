@@ -1,3 +1,4 @@
+v1.8 — 11/11/2026 — AAFin now tells you when a new version is out and downloads it for you (Settings → Updates). New versions are published on GitHub. The setup checklist now explains what to do if AAFin doesn't show up in the car.
 v1.7 — 11/11/2026 — The project is now free and open source under the GPL-3.0 licence.
 v1.6 — 11/11/2026 — Project published to GitHub with a README and logo. Personal notes and private files are kept out of the public copy.
 v1.5 — 11/11/2026 — Added Auto quality (now the default for new cars): video is sized to the car screen, starts at a quality your connection can handle, drops a step automatically if it stalls and carries on from the same spot. Bigger buffer to ride out patchy signal.

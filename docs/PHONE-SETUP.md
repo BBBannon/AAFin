@@ -6,8 +6,9 @@
 
 ## Step 1: Install AAFin
 
-- Install the AAFin APK on the phone (`adb install -r app-release.apk`, or open the APK file on the phone).
-- **To update later:** install the newer APK over the top. Accounts and downloads are kept.
+- Download **`AAFin-vX.Y.apk`** from the [latest release](https://github.com/BBBannon/AAFin/releases/latest) and open it on the phone.
+- **Best:** install from a computer instead: `adb install -r -i com.android.vending AAFin.apk`. Android Auto is more likely to list the app this way (see Step 3).
+- **Updates:** AAFin checks GitHub when it opens. When a new version is out, tap the message (or **Settings → Updates**), then open the downloaded file to install it over the top. Accounts and downloads are kept.
 
 ## Step 2: Allow unknown sources in Android Auto
 
@@ -24,6 +25,11 @@ You only do this **once per phone**. (Already done on the owner's Pixel; still n
 
 - Phone **Settings → Apps → Android Auto → Customise launcher**.
 - Make sure **AAFin** is ticked.
+
+**AAFin not listed?**
+
+1. Android Auto only adds AAFin **after the phone connects to a car** with Unknown sources already on. **Disconnect and connect again.**
+2. Still missing? **Reinstall from a computer** with `adb install -r -i com.android.vending AAFin.apk`. Accounts and downloads are kept.
 
 ## Step 4: Sign in to Jellyfin
 

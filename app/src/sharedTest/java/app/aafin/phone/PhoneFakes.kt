@@ -21,6 +21,7 @@ import app.aafin.data.jellyfin.ServerInfo
 import app.aafin.data.jellyfin.SourceInfo
 import app.aafin.data.profiles.CarProfileStore
 import app.aafin.data.profiles.CarProfilesState
+import app.aafin.data.update.Release
 import app.aafin.testing.InMemoryDataStore
 import kotlinx.coroutines.flow.MutableStateFlow
 
@@ -191,6 +192,10 @@ class FakePhone(setupSeen: Boolean = true, accounts: AccountsState = AccountsSta
     val accountStore = AccountStore(InMemoryDataStore(accounts))
     val carProfiles = CarProfileStore(InMemoryDataStore(CarProfilesState()))
 
+    /** What the fake GitHub reports as the latest release; [updateError] is thrown when this is null. */
+    var latestRelease: Release? = null
+    var updateError: java.io.IOException? = null
+
     val backend = PhoneBackend(
         accounts = accountStore,
         auth = AuthRepository(gateway, accountStore),
@@ -199,6 +204,7 @@ class FakePhone(setupSeen: Boolean = true, accounts: AccountsState = AccountsSta
         library = library,
         downloads = downloads,
         appVersion = "1.0-test",
+        updates = { latestRelease ?: updateError?.let { throw it } },
     )
 
     companion object {

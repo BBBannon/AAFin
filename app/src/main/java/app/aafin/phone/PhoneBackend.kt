@@ -14,6 +14,7 @@ import app.aafin.data.jellyfin.MediaEntry
 import app.aafin.data.jellyfin.Page
 import app.aafin.data.jellyfin.SourceInfo
 import app.aafin.data.profiles.CarProfileStore
+import app.aafin.data.update.UpdateSource
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -81,6 +82,7 @@ class PhoneBackend(
     val library: PhoneLibrary,
     val downloads: PhoneDownloads,
     val appVersion: String,
+    val updates: UpdateSource,
 )
 
 /** The real [PhoneBackend], on top of [AppGraph]. Create on the main thread. */
@@ -119,5 +121,6 @@ fun graphPhoneBackend(context: Context, graph: AppGraph): PhoneBackend {
             override fun freeSpaceBytes() = appContext.filesDir.usableSpace
         },
         appVersion = BuildConfig.VERSION_NAME,
+        updates = graph.updates,
     )
 }

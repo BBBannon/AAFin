@@ -6,6 +6,8 @@ import app.aafin.data.accounts.Account
 import app.aafin.data.jellyfin.JellyfinException
 import app.aafin.data.jellyfin.QuickConnectState
 import app.aafin.data.jellyfin.ServerInfo
+import app.aafin.data.update.Release
+import app.aafin.data.update.isNewerVersion
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
@@ -18,6 +20,7 @@ import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import java.io.IOException
 
 /** What the whole phone app hangs off: first-run state and the accounts. */
 data class AppUiState(
@@ -73,6 +76,44 @@ class AppViewModel(private val backend: PhoneBackend) : ViewModel() {
             }
         }
     }
+
+    private val _update = MutableStateFlow<UpdateUi>(UpdateUi.Checking)
+
+    /** Whether a newer AAFin is on GitHub. Checked once when the app opens, and on request. */
+    val update: StateFlow<UpdateUi> = _update.asStateFlow()
+
+    private var checkingUpdates: Job? = null
+
+    init {
+        checkForUpdates()
+    }
+
+    fun checkForUpdates() {
+        if (checkingUpdates?.isActive == true) return
+        _update.value = UpdateUi.Checking
+        checkingUpdates = viewModelScope.launch {
+            _update.value = try {
+                val latest = backend.updates.latest()
+                if (latest != null && isNewerVersion(latest.version, backend.appVersion)) {
+                    UpdateUi.Available(latest)
+                } else {
+                    UpdateUi.UpToDate
+                }
+            } catch (e: IOException) {
+                UpdateUi.Failed
+            }
+        }
+    }
+}
+
+/** The update check, as Settings and the banner show it. */
+sealed interface UpdateUi {
+    data object Checking : UpdateUi
+    data object UpToDate : UpdateUi
+
+    /** Couldn't reach GitHub (no signal, say). Not shown as an error: it is only a check. */
+    data object Failed : UpdateUi
+    data class Available(val release: Release) : UpdateUi
 }
 
 enum class AddAccountStep { SERVER, METHOD, QUICK_CONNECT, PASSWORD }

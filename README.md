@@ -43,6 +43,8 @@ AAFin is a personal Android app. It's a native **Android Auto** app built with t
 
 ## Install
 
+**Download:** [latest release](https://github.com/BBBannon/AAFin/releases/latest) → `AAFin-vX.Y.apk`. Once installed, AAFin tells you when there's an update.
+
 1. **Install the APK over USB, tagged as a Play Store install.** Android Auto is more likely to list the app this way.
    ```
    adb install -r -i com.android.vending AAFin.apk
@@ -72,6 +74,8 @@ storePassword=...
 keyAlias=...
 keyPassword=...
 ```
+
+**Publishing a release:** bump `versionCode`/`versionName`, add the ChangeLog line, commit, then run `pwsh -File release.ps1`. It tests, builds the signed APK on your PC, tags and uploads it to GitHub Releases. The signing key never leaves your machine.
 
 **Testing without a car:** use Google's **Desktop Head Unit** (Android SDK → `extras;google;auto`, **v2.1 or newer**). See [`docs/DHU-TEST-PLAN.md`](docs/DHU-TEST-PLAN.md).
 

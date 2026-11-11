@@ -4,6 +4,7 @@ import app.aafin.data.accounts.AccountsState
 import app.aafin.data.jellyfin.AuthRepository
 import app.aafin.data.jellyfin.JellyfinException
 import app.aafin.data.jellyfin.ServerInfo
+import app.aafin.data.update.Release
 import app.cash.turbine.test
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -226,6 +227,32 @@ class AccountViewModelsTest {
         viewModel.finishSetup()
         runCurrent()
         assertTrue(viewModel.state.value.setupSeen)
+    }
+
+    @Test
+    fun `update check - newer release offered, same version or no signal is quiet`() = runTest(dispatcher) {
+        val phone = FakePhone.signedIn()
+        val newer = Release("1.1", "https://x/AAFin-v1.1.apk", "https://x/v1.1")
+        phone.latestRelease = newer
+        val viewModel = AppViewModel(phone.backend)
+        assertEquals(UpdateUi.Checking, viewModel.update.value)
+        runCurrent()
+        assertEquals(UpdateUi.Available(newer), viewModel.update.value)
+
+        phone.latestRelease = Release("1.0", "https://x/a.apk", "https://x/p")
+        viewModel.checkForUpdates()
+        runCurrent()
+        assertEquals(UpdateUi.UpToDate, viewModel.update.value)
+
+        phone.latestRelease = null
+        viewModel.checkForUpdates()
+        runCurrent()
+        assertEquals(UpdateUi.UpToDate, viewModel.update.value)
+
+        phone.updateError = java.io.IOException("offline")
+        viewModel.checkForUpdates()
+        runCurrent()
+        assertEquals(UpdateUi.Failed, viewModel.update.value)
     }
 
     @Test

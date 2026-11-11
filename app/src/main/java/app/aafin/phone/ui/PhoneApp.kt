@@ -1,6 +1,7 @@
 package app.aafin.phone.ui
 
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
@@ -73,6 +74,7 @@ import app.aafin.phone.PhoneBackend
 import app.aafin.phone.SearchViewModel
 import app.aafin.phone.SeriesViewModel
 import app.aafin.phone.SettingsViewModel
+import app.aafin.phone.UpdateUi
 import kotlinx.serialization.Serializable
 
 // --- Destinations ------------------------------------------------------------------------------
@@ -169,6 +171,7 @@ private fun MainScreen(backend: PhoneBackend, app: AppViewModel, state: AppUiSta
     val screen = screenInfo(entry)
     val snackbar = remember { SnackbarHostState() }
     SnackbarMessages(app.messages, snackbar)
+    val update by app.update.collectAsStateWithLifecycle()
 
     // A different account means a different library: start Browse afresh. Also the moment to
     // check for downloads left stranded by a new sign-in.
@@ -232,7 +235,13 @@ private fun MainScreen(backend: PhoneBackend, app: AppViewModel, state: AppUiSta
     ) { padding ->
         // Wide screens (landscape, tablets): keep content to a readable width, centred.
         Box(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding), contentAlignment = Alignment.TopCenter) {
-            MainNavHost(backend, app, state, active, nav, snackbar, Modifier.widthIn(max = 840.dp))
+            Column(Modifier.widthIn(max = 840.dp).fillMaxSize()) {
+                val available = update as? UpdateUi.Available
+                if (available != null && screen.tab == Tab.BROWSE && screen.isTabRoot) {
+                    UpdateBanner(available.release, Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
+                }
+                MainNavHost(backend, app, state, active, nav, snackbar, Modifier.weight(1f))
+            }
         }
     }
 }
@@ -365,9 +374,12 @@ private fun MainNavHost(
         }
         composable<SettingsRoute> {
             val viewModel: SettingsViewModel = viewModel { SettingsViewModel(backend) }
+            val update by app.update.collectAsStateWithLifecycle()
             SettingsScreen(
                 viewModel,
                 activeAccountId = active.id,
+                update = update,
+                onCheckUpdates = app::checkForUpdates,
                 onManageAccounts = { nav.navigate(AccountsRoute) },
                 onOpenSetup = { nav.navigate(SetupGuideRoute) },
                 onOpenLicences = { nav.navigate(LicencesRoute) },

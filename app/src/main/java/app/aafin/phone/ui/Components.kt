@@ -1,6 +1,11 @@
 package app.aafin.phone.ui
 
+import android.content.ActivityNotFoundException
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -34,12 +39,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import app.aafin.R
+import app.aafin.data.update.Release
 import coil3.compose.AsyncImage
 import kotlinx.coroutines.flow.Flow
 
@@ -208,3 +215,35 @@ fun HSpace(width: Int) = Spacer(Modifier.width(width.dp))
 
 @Composable
 fun VSpace(height: Int) = Spacer(Modifier.height(height.dp))
+
+/** "AAFin 1.9 is available" — tapping it downloads the new APK in the browser. */
+@Composable
+fun UpdateBanner(release: Release, modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    Row(
+        modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(MaterialTheme.colorScheme.primaryContainer)
+            .clickable(onClickLabel = "Download the update") { openLink(context, release.apkUrl) }
+            .padding(12.dp)
+            .testTag("update-banner"),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(Icons.Default.Info, contentDescription = null, tint = MaterialTheme.colorScheme.onPrimaryContainer)
+        Text(
+            "AAFin ${release.version} is available. Tap to download it, then open the file to install.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onPrimaryContainer,
+        )
+    }
+}
+
+/** Opens [url] in the browser. Returns false if the phone has nothing that can open it. */
+fun openLink(context: Context, url: String): Boolean = try {
+    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+    true
+} catch (e: ActivityNotFoundException) {
+    false
+}

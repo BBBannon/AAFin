@@ -43,6 +43,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.rememberVectorPainter
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
@@ -61,6 +62,7 @@ import app.aafin.phone.CarsViewModel
 import app.aafin.phone.DownloadsUiState
 import app.aafin.phone.DownloadsViewModel
 import app.aafin.phone.Format
+import app.aafin.phone.UpdateUi
 import app.aafin.phone.SettingsViewModel
 import app.aafin.phone.describeCarKey
 import app.aafin.phone.downloadStatusText
@@ -369,6 +371,8 @@ private fun SettingRow(title: String, value: String, onClick: (() -> Unit)?, mod
 fun SettingsScreen(
     viewModel: SettingsViewModel,
     activeAccountId: String?,
+    update: UpdateUi,
+    onCheckUpdates: () -> Unit,
     onManageAccounts: () -> Unit,
     onOpenSetup: () -> Unit,
     onOpenLicences: () -> Unit,
@@ -404,6 +408,22 @@ fun SettingsScreen(
 
         SectionTitle("About")
         SettingRow("AAFin version", state.appVersion, onClick = null)
+        val context = LocalContext.current
+        SettingRow(
+            "Updates",
+            when (update) {
+                UpdateUi.Checking -> "Checking for a newer version…"
+                UpdateUi.UpToDate -> "Up to date. Tap to check again"
+                UpdateUi.Failed -> "Couldn't check just now. Tap to try again"
+                is UpdateUi.Available -> "AAFin ${update.release.version} is available. Tap to download it, then open the file to install"
+            },
+            onClick = when (update) {
+                UpdateUi.Checking -> null
+                is UpdateUi.Available -> { { openLink(context, update.release.apkUrl); Unit } }
+                else -> onCheckUpdates
+            },
+            modifier = Modifier.testTag("updates"),
+        )
         SettingRow("Licences and credits", "The open-source software AAFin is built with", onClick = onOpenLicences)
         Text(
             "AAFin is a personal app. It is not made by, or connected with, the Jellyfin project or Google.",
