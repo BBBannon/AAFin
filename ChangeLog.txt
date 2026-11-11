@@ -1,3 +1,4 @@
+v1.9 — 11/11/2026 — Install and update AAFin from a computer over USB, which is what makes it show up in Android Auto. The setup checklist, update message and instructions now say so.
 v1.8 — 11/11/2026 — AAFin now tells you when a new version is out and downloads it for you (Settings → Updates). New versions are published on GitHub. The setup checklist now explains what to do if AAFin doesn't show up in the car.
 v1.7 — 11/11/2026 — The project is now free and open source under the GPL-3.0 licence.
 v1.6 — 11/11/2026 — Project published to GitHub with a README and logo. Personal notes and private files are kept out of the public copy.

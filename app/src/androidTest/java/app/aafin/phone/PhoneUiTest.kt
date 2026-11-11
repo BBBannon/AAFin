@@ -77,8 +77,8 @@ class PhoneUiTest {
 
         // First run: the setup checklist, all five steps.
         compose.awaitTag("setup-checklist")
-        compose.onNodeWithText("Step 2: Allow unknown sources in Android Auto").assertExists()
-        compose.onNodeWithText("Step 5: Connect to the car").assertExists()
+        compose.onNodeWithText("Step 1: Install AAFin from a computer").assertExists()
+        compose.onNodeWithText("Step 5: Open AAFin on the car screen").assertExists()
         compose.onNodeWithTag("setup-continue").performScrollTo().performClick()
 
         // Signed out: straight to "add your server". The address is normalised and checked.

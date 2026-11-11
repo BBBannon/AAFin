@@ -4,34 +4,21 @@
 
 ---
 
-## Step 1: Install AAFin
+## Step 1: Install AAFin from a computer
 
-- Download **`AAFin-vX.Y.apk`** from the [latest release](https://github.com/BBBannon/AAFin/releases/latest) and open it on the phone.
-- **Best:** install from a computer instead: `adb install -r -i com.android.vending AAFin.apk`. Android Auto is more likely to list the app this way (see Step 3).
-- **Updates:** AAFin checks GitHub when it opens. When a new version is out, tap the message (or **Settings → Updates**), then open the downloaded file to install it over the top. Accounts and downloads are kept.
+**Android Auto only lists apps installed by Google Play.** Its "Unknown sources" setting doesn't cover apps like AAFin (Car App Library apps). Installing over USB with `-i com.android.vending` records Google Play as the installer, so Android Auto lists it.
 
-## Step 2: Allow unknown sources in Android Auto
+1. Download **`AAFin-vX.Y.apk`** from the [latest release](https://github.com/BBBannon/AAFin/releases/latest) **on the computer**.
+2. Phone: **Settings → About phone →** tap **Build number** 7 times → **Developer options → USB debugging** on.
+3. Plug the phone in, allow the computer when asked, then run:
+   ```
+   adb install -r -i com.android.vending AAFin.apk
+   ```
 
-1. Open **Android Auto's settings** on the phone.
-   - Quickest way: in AAFin's checklist tap **Open Android Auto app info**, then **Additional settings in the app**.
-   - Or: phone **Settings → Connected devices → Connection preferences → Android Auto**.
-2. Scroll to the bottom and tap **Version** ten times. Accept the prompt to turn on developer settings.
-3. Open the **three-dot menu → Developer settings**.
-4. Switch on **Unknown sources**.
+- **Don't open the APK on the phone.** It installs, but Android Auto won't list it. Fix it by running the command above.
+- **Updates:** AAFin tells you when a new version is out. Install it with the **same command**. Accounts and downloads are kept.
 
-You only do this **once per phone**. (Already done on the owner's Pixel; still needed on the second phone.)
-
-## Step 3: Show AAFin in the car launcher
-
-- Phone **Settings → Apps → Android Auto → Customise launcher**.
-- Make sure **AAFin** is ticked.
-
-**AAFin not listed?**
-
-1. Android Auto only adds AAFin **after the phone connects to a car** with Unknown sources already on. **Disconnect and connect again.**
-2. Still missing? **Reinstall from a computer** with `adb install -r -i com.android.vending AAFin.apk`. Accounts and downloads are kept.
-
-## Step 4: Sign in to Jellyfin
+## Step 2: Sign in to Jellyfin
 
 1. Open **AAFin** on the phone.
 2. Type the **server address** (no need for `https://`) and tap **Find server**.
@@ -42,9 +29,18 @@ You only do this **once per phone**. (Already done on the owner's Pixel; still n
 - **No Quick Connect?** Tap **Use username and password** instead.
 - **More than one person or server?** Add each account; switch with the **account button** at the top right.
 
-## Step 5: Connect to the car
+## Step 3: Connect to the car once
 
 - Connect the phone to the car (**cable or wireless**).
+- **Android Auto only adds AAFin when a car connects**, so it may not appear anywhere until then.
+
+## Step 4: Show AAFin in the car launcher
+
+- Phone **Settings → Apps → Android Auto → Customise launcher** → make sure **AAFin** is ticked.
+- **Not there?** It was installed on the phone rather than from a computer. Run the Step 1 command, then connect to the car again.
+
+## Step 5: Open AAFin on the car screen
+
 - Open **AAFin** from the Android Auto launcher on the car screen.
 - Films and episodes **play on the car screen, not on the phone**.
 

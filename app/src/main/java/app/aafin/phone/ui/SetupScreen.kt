@@ -51,23 +51,10 @@ data class SetupStep(val title: String, val body: String, val opensAndroidAuto: 
 
 val SetupSteps = listOf(
     SetupStep(
-        "Install AAFin",
-        "Done — AAFin is on this phone. When a new version is out, AAFin tells you: tap the message (or Settings, then Updates) " +
-            "to download it, then open the file to install it over the top. Your accounts and downloads are kept.",
-    ),
-    SetupStep(
-        "Allow unknown sources in Android Auto",
-        "Open Android Auto's settings on this phone. Scroll to the bottom and tap Version ten times, then accept the prompt " +
-            "to turn on developer settings. Open the three-dot menu, choose Developer settings and switch on Unknown sources. " +
-            "You only do this once on each phone.",
-        opensAndroidAuto = true,
-    ),
-    SetupStep(
-        "Show AAFin in the car launcher",
-        "In the phone's Settings, go to Apps, then Android Auto, then Customise launcher, and make sure AAFin is ticked.\n\n" +
-            "Not listed? Android Auto only adds AAFin after the phone has connected to a car with Unknown sources already on. " +
-            "Disconnect from the car and connect again. Still missing? Install AAFin from a computer instead, with: " +
-            "adb install -r -i com.android.vending AAFin.apk",
+        "Install AAFin from a computer",
+        "Done if you did it this way. Android Auto only shows apps installed by Google Play, so AAFin must be installed over USB " +
+            "from a computer with: $ADB_COMMAND — opening the APK file on the phone installs it, but Android Auto won't list it. " +
+            "Install updates the same way; your accounts and downloads are kept.",
     ),
     SetupStep(
         "Sign in to Jellyfin",
@@ -75,11 +62,24 @@ val SetupSteps = listOf(
             "approve it in a Jellyfin app that is already signed in.",
     ),
     SetupStep(
-        "Connect to the car",
-        "Connect the phone to the car with a cable or wirelessly, then open AAFin from the Android Auto launcher on the car " +
-            "screen. Films and episodes play there, not on the phone.",
+        "Connect to the car once",
+        "Connect the phone to the car with a cable or wirelessly. Android Auto only adds AAFin when a car connects, so it may " +
+            "not appear until then.",
+    ),
+    SetupStep(
+        "Show AAFin in the car launcher",
+        "In the phone's Settings, go to Apps, then Android Auto, then Customise launcher, and make sure AAFin is ticked. " +
+            "Not there? AAFin was probably installed on the phone rather than from a computer: install it again with the command in step 1.",
+        opensAndroidAuto = true,
+    ),
+    SetupStep(
+        "Open AAFin on the car screen",
+        "Open AAFin from the Android Auto launcher on the car screen. Films and episodes play there, not on the phone.",
     ),
 )
+
+/** The install command; the same in README.md and docs/PHONE-SETUP.md. */
+const val ADB_COMMAND = "adb install -r -i com.android.vending AAFin.apk"
 
 /**
  * The setup checklist.

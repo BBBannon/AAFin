@@ -415,11 +415,11 @@ fun SettingsScreen(
                 UpdateUi.Checking -> "Checking for a newer version…"
                 UpdateUi.UpToDate -> "Up to date. Tap to check again"
                 UpdateUi.Failed -> "Couldn't check just now. Tap to try again"
-                is UpdateUi.Available -> "AAFin ${update.release.version} is available. Tap to download it, then open the file to install"
+                is UpdateUi.Available -> "AAFin ${update.release.version} is available. Install it from a computer over USB, as before. Tap for the download"
             },
             onClick = when (update) {
                 UpdateUi.Checking -> null
-                is UpdateUi.Available -> { { openLink(context, update.release.apkUrl); Unit } }
+                is UpdateUi.Available -> { { openLink(context, update.release.pageUrl); Unit } }
                 else -> onCheckUpdates
             },
             modifier = Modifier.testTag("updates"),

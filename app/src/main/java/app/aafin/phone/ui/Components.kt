@@ -216,7 +216,7 @@ fun HSpace(width: Int) = Spacer(Modifier.width(width.dp))
 @Composable
 fun VSpace(height: Int) = Spacer(Modifier.height(height.dp))
 
-/** "AAFin 1.9 is available" — tapping it downloads the new APK in the browser. */
+/** "AAFin 1.9 is available" — tapping it opens the release page. Updates go over USB, like the first install. */
 @Composable
 fun UpdateBanner(release: Release, modifier: Modifier = Modifier) {
     val context = LocalContext.current
@@ -225,7 +225,7 @@ fun UpdateBanner(release: Release, modifier: Modifier = Modifier) {
             .fillMaxWidth()
             .clip(RoundedCornerShape(12.dp))
             .background(MaterialTheme.colorScheme.primaryContainer)
-            .clickable(onClickLabel = "Download the update") { openLink(context, release.apkUrl) }
+            .clickable(onClickLabel = "Open the release page") { openLink(context, release.pageUrl) }
             .padding(12.dp)
             .testTag("update-banner"),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -233,7 +233,7 @@ fun UpdateBanner(release: Release, modifier: Modifier = Modifier) {
     ) {
         Icon(Icons.Default.Info, contentDescription = null, tint = MaterialTheme.colorScheme.onPrimaryContainer)
         Text(
-            "AAFin ${release.version} is available. Tap to download it, then open the file to install.",
+            "AAFin ${release.version} is available. Install it from a computer over USB, as before. Tap for the download.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onPrimaryContainer,
         )

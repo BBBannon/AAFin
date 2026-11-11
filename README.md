@@ -43,17 +43,20 @@ AAFin is a personal Android app. It's a native **Android Auto** app built with t
 
 ## Install
 
-**Download:** [latest release](https://github.com/BBBannon/AAFin/releases/latest) → `AAFin-vX.Y.apk`. Once installed, AAFin tells you when there's an update.
+**AAFin is installed from a computer over USB.** Android Auto only lists apps installed by Google Play, and its "Unknown sources" setting [doesn't cover Car App Library apps](https://developer.android.com/training/cars/testing) like AAFin. Installing with `-i com.android.vending` records Google Play as the installer, so Android Auto lists it.
 
-1. **Install the APK over USB, tagged as a Play Store install.** Android Auto is more likely to list the app this way.
+1. **Download** `AAFin-vX.Y.apk` from the [latest release](https://github.com/BBBannon/AAFin/releases/latest) **on your computer**
+2. **Phone:** turn on **Developer options → USB debugging**, plug in, allow the computer
+3. **Install:**
    ```
    adb install -r -i com.android.vending AAFin.apk
    ```
-2. **Allow unknown sources in Android Auto.**
-   - Android Auto settings → tap **Version** ten times → **⋮ → Developer settings** → tick **Unknown sources**
-3. **Check AAFin is ticked** in Android Auto → **Customise launcher**
-4. **Open AAFin on the phone** and sign in to your server
-5. **Connect to the car** and open AAFin from the car's app launcher
+4. **Open AAFin**, sign in to your Jellyfin server
+5. **Connect to the car once**, then check AAFin is ticked in Android Auto → **Customise launcher**
+
+- **Don't open the APK on the phone.** It installs, but Android Auto won't list it.
+- **Updates:** AAFin tells you when there's a new version. Install it with the **same command**. Accounts and downloads are kept.
+- `adb` comes with Google's free [Android SDK Platform-Tools](https://developer.android.com/tools/releases/platform-tools).
 
 Full walkthrough: [`docs/PHONE-SETUP.md`](docs/PHONE-SETUP.md). The same checklist is in the app under **Settings → Open setup checklist**.
 
