@@ -34,7 +34,8 @@ Copy-Item app/build/outputs/apk/release/app-release.apk $apk -Force
 
 # Tag, push, publish.
 git tag -a $tag -m "AAFin $version"
-git push origin main $tag
+# Borrow the GitHub CLI's login for this push only (no change to global git settings).
+git -c credential.helper= -c 'credential.helper=!gh auth git-credential' push origin main $tag
 if ($LASTEXITCODE -ne 0) { throw 'Push failed.' }
 $body = ($notes -replace '^v[\d.]+ — [\d/]+ — ', '') + "`n`nInstall: download **AAFin-$tag.apk** below and open it on the phone. Already installed? AAFin offers this update itself."
 gh release create $tag $apk --title "AAFin $version" --notes $body
