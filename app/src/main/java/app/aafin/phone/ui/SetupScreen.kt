@@ -63,13 +63,14 @@ val SetupSteps = listOf(
     ),
     SetupStep(
         "Connect to the car once",
-        "Connect the phone to the car with a cable or wirelessly. Android Auto only adds AAFin when a car connects, so it may " +
-            "not appear until then.",
+        "Connect the phone to the car with a cable or wirelessly. Android Auto only lists AAFin while a car is connected, so it " +
+            "won't appear anywhere in Android Auto until then. That's normal.",
     ),
     SetupStep(
         "Show AAFin in the car launcher",
-        "In the phone's Settings, go to Apps, then Android Auto, then Customise launcher, and make sure AAFin is ticked. " +
-            "Not there? AAFin was probably installed on the phone rather than from a computer: install it again with the command in step 1.",
+        "While connected to the car, go to the phone's Settings, then Apps, then Android Auto, then Customise launcher, and make " +
+            "sure AAFin is ticked. Not there even while connected? AAFin was probably installed on the phone rather than from a " +
+            "computer: install it again with the command in step 1, then reconnect.",
         opensAndroidAuto = true,
     ),
     SetupStep(

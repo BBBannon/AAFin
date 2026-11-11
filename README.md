@@ -52,7 +52,9 @@ AAFin is a personal Android app. It's a native **Android Auto** app built with t
    adb install -r -i com.android.vending AAFin.apk
    ```
 4. **Open AAFin**, sign in to your Jellyfin server
-5. **Connect to the car once**, then check AAFin is ticked in Android Auto → **Customise launcher**
+5. **Connect to the car**, then check AAFin is ticked in Android Auto → **Customise launcher**
+
+**AAFin only appears in Android Auto while a car is connected.** With the phone unplugged it's missing from Customise launcher, and that's normal. No car handy? Google's **Desktop Head Unit** counts as one.
 
 - **Don't open the APK on the phone.** It installs, but Android Auto won't list it.
 - **Updates:** AAFin tells you when there's a new version. Install it with the **same command**. Accounts and downloads are kept.

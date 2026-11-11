@@ -32,12 +32,13 @@
 ## Step 3: Connect to the car once
 
 - Connect the phone to the car (**cable or wireless**).
-- **Android Auto only adds AAFin when a car connects**, so it may not appear anywhere until then.
+- **Android Auto only lists AAFin while a car is connected.** Unplugged, it's missing from Customise launcher. That's normal.
 
 ## Step 4: Show AAFin in the car launcher
 
-- Phone **Settings → Apps → Android Auto → Customise launcher** → make sure **AAFin** is ticked.
-- **Not there?** It was installed on the phone rather than from a computer. Run the Step 1 command, then connect to the car again.
+- **While connected to the car:** phone **Settings → Apps → Android Auto → Customise launcher** → make sure **AAFin** is ticked.
+- **Not there even while connected?** It was installed on the phone rather than from a computer. Run the Step 1 command, then reconnect.
+- **No car handy?** Google's **Desktop Head Unit** on a computer counts as a car. See [`DHU-TEST-PLAN.md`](DHU-TEST-PLAN.md).
 
 ## Step 5: Open AAFin on the car screen
 
