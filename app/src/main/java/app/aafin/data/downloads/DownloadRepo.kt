@@ -34,6 +34,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.File
@@ -121,6 +122,7 @@ class DownloadRepo(
      *
      * Fetches playback details, saves the poster and text subtitles, writes the metadata and
      * hands the media to the download service. Returns once the download is queued.
+     * An existing download of the same item (any state, any quality) is discarded and replaced.
      *
      * @throws JellyfinException if signed out, the server can't be reached or offers no suitable stream.
      * @throws IOException if the metadata can't be written to storage.
@@ -146,7 +148,7 @@ class DownloadRepo(
             }
         }
 
-        val metadata = withContext(Dispatchers.IO) {
+        val (metadata, replacesExisting) = withContext(Dispatchers.IO) {
             val posterFileName = savePoster(account, entry)
             val subtitles = plan.externalSubtitles.mapNotNull { saveSubtitle(entry.id, it) }
             DownloadMetadata(
@@ -162,10 +164,13 @@ class DownloadRepo(
                 audioTracks = if (quality == DownloadQuality.ORIGINAL) plan.audioTracks else emptyList(),
                 createdAtMs = System.currentTimeMillis(),
                 resumePositionMs = entry.resumePositionMs,
-            ).also(metadataStore::save)
+            ).also(metadataStore::save) to (downloadManager.downloadIndex.getDownload(entry.id) != null)
         }
         cachedMetadata = null
 
+        // Removing first throws away whatever was fetched from the old address, so a retry or a
+        // change of quality starts clean (Media3 then restarts the download with the new request).
+        if (replacesExisting) downloadManager.removeDownload(entry.id)
         DownloadService.sendAddDownload(appContext, AAFinDownloadService::class.java, request, /* foreground = */ false)
         Log.i(TAG, "Queued ${metadata.quality} download of ${metadata.itemId}")
         refresh()
@@ -177,6 +182,49 @@ class DownloadRepo(
         withContext(Dispatchers.IO) { metadataStore.delete(itemId) }
         cachedMetadata = null
         refresh()
+    }
+
+    /** Pauses a queued or running download. It stays paused until [resume], even across restarts. */
+    fun pause(itemId: String) = setStopReason(itemId, STOP_REASON_PAUSED)
+
+    /** Carries on a download paused with [pause]. */
+    fun resume(itemId: String) = setStopReason(itemId, Download.STOP_REASON_NONE)
+
+    private fun setStopReason(itemId: String, reason: Int) {
+        DownloadService.sendSetStopReason(appContext, AAFinDownloadService::class.java, itemId, reason, /* foreground = */ false)
+    }
+
+    /**
+     * Starts a download again from scratch with a fresh address from the server: for failed
+     * downloads. Needs the account that made the download to be the active one.
+     *
+     * @throws JellyfinException / [IOException] as [enqueue].
+     */
+    suspend fun retry(itemId: String) {
+        val metadata = withContext(Dispatchers.IO) { metadataStore.load(itemId) } ?: return
+        enqueue(metadata.entry, metadata.quality)
+    }
+
+    /**
+     * Restarts the active account's unfinished 720p downloads whose stream address carries an
+     * access token that is no longer the account's (it changes if the account is signed in
+     * again after the server forgot this device). Left alone they would fail part-way through.
+     *
+     * @return how many downloads were restarted.
+     * @throws JellyfinException / [IOException] as [enqueue].
+     */
+    suspend fun restartStale(): Int {
+        val account = accountStore.active() ?: return 0
+        val stale = withContext(Dispatchers.IO) {
+            recordedDownloads().values
+                .filter { it.state != Download.STATE_COMPLETED && it.state != Download.STATE_REMOVING }
+                .filter { hasStaleToken(it.request.uri.toString(), account.accessToken) }
+                .mapNotNull { metadataStore.load(it.request.id) }
+                .filter { it.accountId == account.id && it.quality == DownloadQuality.P720 }
+        }
+        stale.forEach { enqueue(it.entry, it.quality) }
+        if (stale.isNotEmpty()) Log.i(TAG, "Restarted ${stale.size} download(s) after the access token changed")
+        return stale.size
     }
 
     suspend fun find(itemId: String): DownloadedItem? {
@@ -348,9 +396,23 @@ class DownloadRepo(
         null
     }
 
-    private companion object {
-        const val TAG = "AAFin.Downloads"
-        const val PROGRESS_INTERVAL_MS = 1_000L
-        const val POSTER_WIDTH = 600
+    companion object {
+        private const val TAG = "AAFin.Downloads"
+        private const val PROGRESS_INTERVAL_MS = 1_000L
+        private const val POSTER_WIDTH = 600
+
+        /** Media3 stop reason for "paused by the user" (any non-zero value stops a download). */
+        private const val STOP_REASON_PAUSED = 1
+
+        /**
+         * True if [url] embeds a Jellyfin access token (`ApiKey`, or `api_key` on older servers)
+         * that differs from [currentToken]. Addresses with no token are authenticated by header
+         * and never go stale.
+         */
+        fun hasStaleToken(url: String, currentToken: String): Boolean {
+            val parsed = url.toHttpUrlOrNull() ?: return false
+            val embedded = parsed.queryParameter("ApiKey") ?: parsed.queryParameter("api_key") ?: return false
+            return embedded != currentToken
+        }
     }
 }

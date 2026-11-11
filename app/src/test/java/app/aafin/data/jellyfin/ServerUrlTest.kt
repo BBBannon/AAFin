@@ -70,9 +70,13 @@ class ServerUrlTest {
     fun `server compatibility is derived from the reported version`() {
         assertEquals(ServerCompatibility.SUPPORTED, ServerCompatibility.of("10.11.5"))
         assertEquals(ServerCompatibility.SUPPORTED, ServerCompatibility.of("10.11"))
-        assertEquals(ServerCompatibility.TOO_OLD, ServerCompatibility.of("10.10.7"))
+        assertEquals(ServerCompatibility.SUPPORTED, ServerCompatibility.of("10.10.7"))
+        assertEquals(ServerCompatibility.SUPPORTED, ServerCompatibility.of("12.0.0"))
+        assertEquals(ServerCompatibility.SUPPORTED, ServerCompatibility.of("12.4.0"))
+        assertEquals(ServerCompatibility.SUPPORTED, ServerCompatibility.of("12.11"))
+        assertEquals(ServerCompatibility.TOO_OLD, ServerCompatibility.of("10.9.11"))
         assertEquals(ServerCompatibility.TOO_OLD, ServerCompatibility.of("9.0.0"))
-        assertEquals(ServerCompatibility.NEWER_UNTESTED, ServerCompatibility.of("12.4.0"))
+        assertEquals(ServerCompatibility.NEWER_UNTESTED, ServerCompatibility.of("13.0.0"))
         assertEquals(ServerCompatibility.UNKNOWN, ServerCompatibility.of(null))
         assertEquals(ServerCompatibility.UNKNOWN, ServerCompatibility.of("banana"))
     }

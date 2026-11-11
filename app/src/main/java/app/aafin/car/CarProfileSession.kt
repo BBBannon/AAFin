@@ -43,6 +43,7 @@ class CarProfileSession(
             CarIdentity.of(model = null, surface = withTimeoutOrNull(surfaceTimeoutMs) { firstSurface.await() })
         }
         val profile = store.getOrCreate(identity.key, identity.suggestedName)
+        store.markUsed(identity.key)
         Log.i(CarLog.CAR, "Car profile: key=${profile.key} name=${profile.name} quality=${profile.quality}")
         identity
     }

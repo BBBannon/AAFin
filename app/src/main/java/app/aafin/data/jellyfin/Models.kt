@@ -88,6 +88,13 @@ data class Page<T>(
     val hasMore: Boolean get() = nextStartIndex < totalCount
 }
 
+/** What the server knows about an item's file. Either value may be missing. */
+data class SourceInfo(
+    val sizeBytes: Long?,
+    /** Total bitrate in bits per second. */
+    val bitrate: Int?,
+)
+
 enum class ImageKind(internal val apiName: String) {
     PRIMARY("Primary"), BACKDROP("Backdrop"), THUMB("Thumb")
 }

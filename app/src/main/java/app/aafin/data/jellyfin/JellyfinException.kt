@@ -1,6 +1,8 @@
 package app.aafin.data.jellyfin
 
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerializationException
 import org.jellyfin.sdk.api.client.exception.ApiClientException
 import org.jellyfin.sdk.api.client.exception.InvalidContentException
@@ -60,15 +62,22 @@ fun Throwable.toJellyfinException(): JellyfinException = when (this) {
 }
 
 /**
- * Runs an SDK call, converting its exceptions into [JellyfinException].
+ * Runs an SDK call on a background thread, converting its exceptions into [JellyfinException].
  * Cancellation and programming errors pass through untouched.
+ *
+ * The switch to [Dispatchers.IO] matters: the SDK waits for the response headers without
+ * blocking, but then reads the body on whichever thread the coroutine resumes on. Called from
+ * the main thread (as the car and phone screens do) that is a `NetworkOnMainThreadException`
+ * whenever the body has not already arrived - always possible over HTTP/1.1.
  */
-inline fun <T> jellyfinCall(block: () -> T): T = try {
-    block()
-} catch (e: CancellationException) {
-    throw e
-} catch (e: ApiClientException) {
-    throw e.toJellyfinException()
-} catch (e: SerializationException) {
-    throw e.toJellyfinException()
+suspend fun <T> jellyfinCall(block: suspend () -> T): T = withContext(Dispatchers.IO) {
+    try {
+        block()
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: ApiClientException) {
+        throw e.toJellyfinException()
+    } catch (e: SerializationException) {
+        throw e.toJellyfinException()
+    }
 }

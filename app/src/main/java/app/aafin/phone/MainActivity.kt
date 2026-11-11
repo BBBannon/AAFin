@@ -1,81 +1,40 @@
 package app.aafin.phone
 
+import android.graphics.Color
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
-import androidx.compose.foundation.Image
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
-import androidx.compose.material3.darkColorScheme
-import androidx.compose.runtime.Composable
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.unit.dp
-import app.aafin.R
+import androidx.activity.enableEdgeToEdge
+import app.aafin.AAFinApp
+import app.aafin.phone.ui.AAFinTheme
+import app.aafin.phone.ui.PhoneApp
 
-/** The phone UI's single activity. Stage 3 replaces the placeholder with the real screens. */
+/**
+ * The phone UI's single activity: accounts, browse-to-download, downloads, car profiles and
+ * settings. Nothing plays here - video only ever plays on the car screen.
+ */
 class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        // The app is always dark, so the system bars always get light icons.
+        enableEdgeToEdge(
+            statusBarStyle = SystemBarStyle.dark(Color.TRANSPARENT),
+            navigationBarStyle = SystemBarStyle.dark(Color.TRANSPARENT),
+        )
         super.onCreate(savedInstanceState)
+        val backend = graphPhoneBackend(this, AAFinApp.graph(this))
         setContent {
             AAFinTheme {
-                PlaceholderScreen()
+                PhoneApp(backend)
             }
         }
     }
-}
 
-private val BrandPurple = Color(0xFFAA5CC3)
-private val BrandBlue = Color(0xFF00A4DC)
-private val BrandDark = Color(0xFF101018)
-
-/** Dark theme built from the logo palette. */
-@Composable
-fun AAFinTheme(content: @Composable () -> Unit) {
-    MaterialTheme(
-        colorScheme = darkColorScheme(
-            primary = BrandBlue,
-            secondary = BrandPurple,
-            background = BrandDark,
-            surface = BrandDark,
-        ),
-        content = content,
-    )
-}
-
-/** Deliberate Stage 1 placeholder. */
-@Composable
-private fun PlaceholderScreen() {
-    Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-        Column(
-            modifier = Modifier.fillMaxSize().padding(32.dp),
-            verticalArrangement = Arrangement.Center,
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
-            Image(
-                painter = painterResource(R.drawable.ic_launcher_foreground),
-                contentDescription = null,
-                modifier = Modifier.size(160.dp),
-            )
-            Spacer(Modifier.height(16.dp))
-            Text(
-                text = stringResource(R.string.phone_placeholder_message),
-                style = MaterialTheme.typography.titleMedium,
-                textAlign = TextAlign.Center,
-            )
-        }
+    override fun onStart() {
+        super.onStart()
+        // Unfinished downloads only carry on once the app is on screen again (there is no
+        // background scheduler by design): starting the download service is allowed here.
+        AAFinApp.graph(this).downloads.resumePending()
     }
 }

@@ -1,7 +1,6 @@
-# AAFin — Architecture (Stages 1–2: foundation + car app)
+# AAFin — Architecture (Stages 1–3: foundation, car app, phone app)
 
-**What exists now:** build, signing, manifest, logo, the whole data layer (Stage 1) and the **Android Auto car app** (Stage 2, §11). The phone UI is still a placeholder.
-**What comes next:** Stage 3 = phone UI (`app.aafin.phone`).
+**What exists now:** build, signing, manifest, logo, the whole data layer (Stage 1), the **Android Auto car app** (Stage 2, §11) and the **phone app** (Stage 3, §12).
 
 Read `docs/SPEC.md` first. This file is the **contract between the data layer and the UI stages**.
 
@@ -28,7 +27,8 @@ app.aafin
 ├── car/                AAFinCarAppService, AAFinSession, CarEnv (CarBackend…), CarLogic, CarProfileSession, Posters
 │   ├── render/         VideoSurfaceRenderer, VideoPresentation                 ← video on the car surface
 │   └── screens/        CarScreen (base), Home, Library, Series, EntryList, Downloads, Search, Accounts, Player, Options
-├── phone/              MainActivity (+ AAFinTheme), placeholder               ← Stage 3 builds here
+├── phone/              MainActivity, PhoneBackend, PhoneLogic, view models     ← phone app (§12)
+│   └── ui/             PhoneApp (navigation), Theme, Components, and the screens
 └── data/
     ├── Ticks, JsonDataStore (AppJson, JsonSerializer, jsonDataStore)
     ├── accounts/       Account, AccountsState, AccountStore
@@ -53,6 +53,7 @@ app.aafin
 | `carProfiles` | `CarProfileStore` | per-car quality, default quality |
 | `playback` | `PlaybackController` | the single player + its state |
 | `downloads` | `DownloadRepo` | enqueue / list / delete downloads |
+| `phoneSettings` | `PhoneSettingsStore` | phone-only settings (setup checklist seen) |
 | `appScope` | `CoroutineScope` | process-lifetime, main dispatcher |
 | `playbackResolver`, `progressReporter`, `downloadEnvironment`, `jellyfinClients`, `mediaHttpClient`, `codecCapabilities` | — | plumbing; UI should not need them |
 
@@ -71,7 +72,7 @@ app.aafin
 ### 4.2 Sign-in — `AuthRepository`
 
 1. `suspend findServer(input: String): ServerInfo` — normalises what the user typed and checks `/System/Info/Public`.
-   - `ServerInfo.compatibility` → `SUPPORTED` / `TOO_OLD` / `NEWER_UNTESTED` / `UNKNOWN`. **Show a warning for anything but `SUPPORTED`** (see §7 risk 1).
+   - `ServerInfo.compatibility` → `SUPPORTED` (**10.10 to 12.x**) / `TOO_OLD` (below 10.10) / `NEWER_UNTESTED` (13+) / `UNKNOWN`. **Show a warning for anything but `SUPPORTED`** (see §7.1).
    - `ServerInfo.isSecure` → false for plain HTTP. Show a warning.
 2. **Quick Connect:** `quickConnect(server): Flow<QuickConnectState>` — cold flow. **Collect to start, cancel collection to abandon.**
    - `Starting` → `AwaitingApproval(code)` → `Authenticating` → `Success(account)`
@@ -93,6 +94,7 @@ app.aafin
 | `episodes(seriesId, seasonId?)` | `List<MediaEntry>` | |
 | `search(query, limit)` | `List<MediaEntry>` | films, series, episodes |
 | `item(itemId)` | `MediaEntry` | fresh resume position |
+| `sourceInfo(itemId)` | `SourceInfo` | file size and bitrate, for download size estimates (Stage 3) |
 | `posterUrl(entry, maxWidth)` | `String?` | falls back to the series poster for episodes |
 | `imageUrl(itemId, kind, maxWidth, tag)` | `String?` | `ImageKind.PRIMARY / BACKDROP / THUMB` |
 
@@ -128,13 +130,18 @@ app.aafin
 - `suspend getOrCreate(key, suggestedName): CarProfile` — call when the car is identified.
 - Keys: `CarProfileStore.keyForModel(manufacturer, model, year)` (null if the car reports nothing) → else `keyForScreen(widthPx, heightPx, dpi)`.
 - `profile(key): Flow<CarProfile?>`, `profiles: Flow<List<CarProfile>>`, `rename`, `setQuality`, `remove`.
+- `markUsed(key)` — stamps `CarProfile.lastUsedAtMs`; the car session calls it on every connection ("Last used" on the phone).
 - `defaultQuality: Flow<QualityTier>` / `setDefaultQuality` — the Settings screen's "default quality"; applied to newly seen cars.
 
 ### 4.7 Downloads — `DownloadRepo` (`graph.downloads`, main thread)
 
 - `downloads: StateFlow<List<DownloadedItem>>` — `metadata`, `status` (`QUEUED / DOWNLOADING / PAUSED / COMPLETED / FAILED / REMOVING`), `percent`, `bytesDownloaded`, `posterFile`, `entry` (with the locally saved resume position).
 - `suspend enqueue(entry, DownloadQuality.ORIGINAL | P720)` — throws `JellyfinException` / `IOException`.
+  - An existing download of the same item is **discarded and replaced** (clean restart with the new address).
 - `suspend delete(itemId)`, `suspend find(itemId)`, `suspend storageUsedBytes()`.
+- `pause(itemId)` / `resume(itemId)` — Media3 stop reason; a paused download stays paused across restarts.
+- `suspend retry(itemId)` — starts again from scratch with a **fresh address** from the server (for failed downloads).
+- `suspend restartStale(): Int` — restarts the active account's unfinished 720p downloads whose address embeds an **old access token** (§12.6).
 - **`resumePending()` — Stage 3 must call this in `MainActivity.onStart`** (restarts unfinished downloads; there is no background scheduler by design).
 - **Stage 3 must request `POST_NOTIFICATIONS`** before the first download (Android 13+).
 - `metadata.playableOnThisPhone == false` → warn: an Original download may not play on this phone.
@@ -178,7 +185,7 @@ app.aafin
 |---|---|---|
 | AGP | 8.10.1 | newest line that runs on Gradle 8.11.1 (8.11+ needs Gradle 8.13) |
 | Kotlin + Compose compiler plugin + serialization plugin | 2.2.21 | matches the Jellyfin SDK (built with 2.2.10); known-good with AGP 8.10 |
-| Jellyfin SDK `jellyfin-core` | **1.8.12** | newest for **Jellyfin 10.11**; 1.9.x needs server 12 **and** Kotlin 2.4 |
+| Jellyfin SDK `jellyfin-core` | **1.8.12** | generated for **Jellyfin 10.11**; audited as wire-compatible with **12.4** for every call AAFin makes (§7.1). 1.9.x targets server 12 only and needs Kotlin 2.4.20 — which **does** run on this Gradle/AGP (fallback recipe in §7.1) |
 | Media3 | **1.9.2** | newest with `minCompileSdk` 35 (1.10+ needs 36) |
 | Car App Library `app`, `app-projected`, `app-testing` | 1.7.0 | newest stable (1.8 is still rc) |
 | Compose BOM | 2025.12.01 | Compose 1.10.0 / Material3 1.4.0, `minCompileSdk` 35 |
@@ -189,7 +196,7 @@ app.aafin
 | Coil | 3.3.0 (`coil-compose`, `coil-network-okhttp`) | Kotlin 2.2 compatible |
 | coroutines / serialization-json | 1.10.2 / 1.9.0 | what the Jellyfin SDK depends on |
 | SLF4J | `slf4j-nop` 2.0.17 | required at run time by the Jellyfin SDK's logging (§7.10) |
-| Tests | JUnit 4.13.2, coroutines-test, Turbine 1.2.1, OkHttp MockWebServer 5.3.2, Robolectric 4.16.1, androidx.test core/runner 1.7.0, ext-junit 1.3.0 | Robolectric + `app-testing` are there for Stage 2 screen tests; runner + ext-junit for the on-device smoke test |
+| Tests | JUnit 4.13.2, coroutines-test, Turbine 1.2.1, OkHttp MockWebServer 5.3.2, Robolectric 4.16.1, androidx.test core/runner 1.7.0, ext-junit 1.3.0, Compose `ui-test-junit4` + `ui-test-manifest` (from the BOM) | Robolectric + `app-testing` are there for Stage 2 screen tests; runner + ext-junit for the on-device smoke test; the Compose test artefacts for the phone UI tests (Stage 3) |
 
 - **Release:** R8/minify **off** (v1), signed from `keystore.properties` (git-ignored). Keystore: `C:\Users\Ben\.android-keys\aafin-release.jks`, alias `aafin`.
 - **To move to newer libraries later:** install platform android-36 and a newer Gradle first.
@@ -198,7 +205,9 @@ app.aafin
 
 ## 7. Surprises found while verifying APIs
 
-1. **Jellyfin jumped from 10.11 to 12.x**, and SDK 1.9 says it is "no longer compatible with 10.11 and earlier". 1.8.12 (10.11) was chosen because it is the only line that fits this toolchain. The SDK's JSON is lenient (`ignoreUnknownKeys`, unknown enum values coerced), and AAFin only uses long-standing endpoints.
+1. **Jellyfin jumped from 10.11 to 12.x** (the owner's server runs **12.4.0**), and SDK 1.9 says it is "no longer compatible with 10.11 and earlier".
+   - **AAFin stays on SDK 1.8.12.** An audit of the 10.11.11 and 12.4 OpenAPI specs and server source found **every endpoint AAFin calls unchanged on the wire** (same routes, same bodies, `Authorization: MediaBrowser` header auth still accepted). The SDK's JSON is lenient (`ignoreUnknownKeys`, unknown enum values coerced). `ServerCompatibility` therefore treats **10.10–12.x as supported**.
+   - **Fallback if a later 12.x breaks decoding** (the trigger would be sign-in failing on `UserDto`): move to SDK **1.9.4**. It needs **Kotlin 2.4.20**, coroutines/serialization 1.11.0, the three JVM modules `jellyfin-api`, `jellyfin-api-okhttp`, `jellyfin-model` instead of `jellyfin-core` (whose AAR demands compileSdk 37), and OkHttp pinned `strictly("5.3.2")`. **Gradle 8.11.1, AGP 8.10.1 and compileSdk 35 stay as they are** — proven with a scratch build. API accessors are renamed (`quickConnectApi`/`userApi` → `authenticationApi`, `itemsApi`/`userLibraryApi` → `libraryApi`, `tvShowsApi` → `showApi`, `playStateApi` → `sessionApi`, `userViewsApi` → `userViewApi`).
 2. **Server-issued URLs contain the token** (`TranscodingUrl`, subtitle `DeliveryUrl` → `ApiKey=`). Hence the no-logging rule.
 3. **A stop report with a `PlaySessionId` kills the transcode** (server source, `PlaystateController`). That shaped the queued-report design.
 4. **The start position is not sent to the server.** HLS playlists cover the whole runtime, so the player seeks instead (`player.setMediaItem(item, positionMs)`). Avoids offset bugs.
@@ -209,6 +218,11 @@ app.aafin
 9. **Gradle 8.11.1 on Windows occasionally fails with "Could not move temporary workspace"** on a cold cache. Re-running the same command fixes it.
 10. **The Jellyfin SDK crashes on its first HTTP call without SLF4J.** It logs through kotlin-logging, whose Android build defaults to SLF4J but does not bring it in (`NoClassDefFoundError: org.slf4j.LoggerFactory`). Found by the on-device smoke test. Fixed with `org.slf4j:slf4j-nop` — which also keeps the SDK's request URLs (Quick Connect secrets, search terms) out of logcat. **Do not remove that dependency.**
 11. **Car manifest names were checked against the library's own constants** (`androidx.car.app.CarAppService`, `androidx.car.app.category.NAVIGATION`, `androidx.car.app.minCarApiLevel`, `androidx.car.app.NAVIGATION_TEMPLATES`, `androidx.car.app.ACCESS_SURFACE`).
+12. **The Jellyfin SDK reads the response body on the calling thread.** It waits for the headers without blocking, then calls `body.bytes()` wherever the coroutine resumes.
+    - From the main thread (where the car and phone screens call from) that is a `NetworkOnMainThreadException` whenever the body has not already arrived — always possible over HTTP/1.1; HTTP/2 hides it.
+    - Found in Stage 3 by running the release build against a local HTTP/1.1 stand-in server: the app crashed while polling Quick Connect.
+    - **Fix:** `jellyfinCall` is now `suspend` and runs every SDK call on `Dispatchers.IO`.
+    - Regression test: `MainThreadNetworkTest` (on-device; fails without the fix).
 
 ---
 
@@ -228,7 +242,7 @@ app.aafin
 
 **For everyone**
 
-1. **Server version.** Untested against the real server (no credentials in Stage 1). If it runs **Jellyfin 12.x**, the 1.8.12 SDK is outside its supported range — basic calls should still work, but check sign-in, browse and PlaybackInfo first. Fix if needed: SDK 1.9.x → needs Kotlin 2.4 → probably a newer Gradle/AGP.
+1. **Server version.** The real server runs **Jellyfin 12.4.0**; no signed-in call has been made against it yet. The audit (§7.1) says SDK 1.8.12 works unchanged, but check in this order: Quick Connect sign-in → libraries → an item → PlaybackInfo → progress report → download. Fix if needed: SDK 1.9.4 with Kotlin 2.4.20 — **no Gradle/AGP/compileSdk change** (recipe in §7.1).
 2. **Nothing has yet played a real stream.** The SDK calls are tested against a fake server with handcrafted (Jellyfin-shaped) JSON, and the player/download objects are created on a real Android runtime — but ExoPlayer, HLS and downloads have not run end-to-end against a real server.
 3. **Two users of the same server on one phone:** media requests use the active account's token. Fine unless the two users have different library access.
 
@@ -242,10 +256,11 @@ app.aafin
 
 **Stage 3 (phone)**
 
-9. **720p downloads are HLS transcodes fetched segment by segment.** Speed is limited by the server's transcoder; a paused download relies on the server restarting the transcode at the right segment. Signing out and back in changes the token and **breaks unfinished 720p downloads** (delete and re-queue).
+9. **720p downloads are HLS transcodes fetched segment by segment.** Speed is limited by the server's transcoder; a paused download relies on the server restarting the transcode at the right segment. A new access token would strand unfinished 720p downloads — **now handled**: they are restarted automatically, and anything that still fails shows **Retry** (§12.6).
 10. **Original downloads need the "allow media download" permission** on the Jellyfin user (`/Items/{id}/Download`). `MediaEntry.canDownload` tells the UI.
 11. **Android 15+ limits `dataSync` foreground services to 6 hours a day.** Very large queues may stop and need the app reopening.
-12. **Material icons:** only `material-icons-core` is bundled (the extended set adds ~10 MB with R8 off).
+12. **Material icons:** only `material-icons-core` is bundled (the extended set adds ~10 MB with R8 off). The phone UI reuses the car's vector drawables for download / pause / play / film / TV / folder / search / tune, plus `ic_phone_car`.
+13. More phone-specific risks: §12.9.
 
 ---
 
@@ -268,10 +283,15 @@ app.aafin
 | `car/CarBrowseScreensTest` | **Robolectric + `app-testing`**: Home (signed out, error, overflow), Library (empty, paging, error), Series, Downloads, Search, Accounts, budget restart |
 | `car/CarPlayerScreensTest` | player strips, error/retry, stop on exit, next-episode countdown, options and choices |
 
-- Car screen tests run against `FakeBackend` (`car/CarFakes.kt`) — no server, no head unit.
-- **166 unit tests** in total (83 from Stage 1 + 83 for the car).
+| `phone/PhoneLogicTest` | download size estimates, the Original / 720p options, formatting, car key wording, server warnings, stale-token detection |
+| `phone/AccountViewModelsTest` | add-account flow (server check, **Quick Connect states**, timeout, disabled, cancel, password), app state, **account switching** and removal, stale-download messages |
+| `phone/BrowseAndManageViewModelsTest` | **download choice** (720p default, Original permission, season, failures), paging, series, search, downloads manager (retry rules, storage), cars, settings |
 
-**On-device tests:** `gradlew.bat connectedDebugAndroidTest` — `GraphSmokeTest` (Stage 1) and **`VideoSurfaceRendererTest`** (§11.4).
+- Car screen tests run against `FakeBackend` (`car/CarFakes.kt`) — no server, no head unit.
+- Phone tests run against `FakePhone` (`src/sharedTest/…/phone/PhoneFakes.kt`, shared with the on-device tests).
+- **224 unit tests** in total (84 data layer + 83 car + 57 phone).
+
+**On-device tests:** `gradlew.bat connectedDebugAndroidTest` — `GraphSmokeTest` (Stage 1), **`VideoSurfaceRendererTest`** (§11.4), **`PhoneUiTest`** (§12.8) and **`MainThreadNetworkTest`** (§7.12) — 24 in total.
 
 - Creates every `AppGraph` singleton on a real Android runtime: DataStore files, ExoPlayer + `MediaSession`, download cache/manager, WorkManager queue, the SDK's HTTP stack.
 - Needs no Jellyfin server. Leaves real accounts alone.
@@ -454,3 +474,134 @@ The next episode comes from the server's episode list, or from the downloads whe
 `adb logcat -s AAFin/Car AAFin/Surface AAFin/Playback AAFin.Playback`
 
 **Never logged:** tokens, stream URLs, poster URLs, search text.
+
+---
+
+## 12. Phone app (Stage 3)
+
+### 12.1 What it is for
+
+- **Accounts, browse-to-download, downloads, car profiles, settings.** Nothing plays on the phone — item screens say "Play from your car screen".
+- Compose + Material 3, **dark only**, colours from the logo (#AA5CC3 → #00A4DC on #101018). UK English. Strings are inline Kotlin (single-language personal app, same as the car screens).
+- Setup steps for a new phone: `docs/PHONE-SETUP.md` (the same words as the in-app checklist, `SetupSteps`).
+- Screenshots of every main screen: `docs/screenshots/`.
+
+### 12.2 How it is put together
+
+```
+MainActivity ── graphPhoneBackend(graph) ──► PhoneApp(backend)        ui/PhoneApp.kt
+                                                │
+   loading → SetupScreen (first run) → AddAccountScreen (signed out) → MainScreen
+                                                                         │
+                                         Scaffold: top bar (title, Back, account switcher)
+                                                   bottom bar (Browse · Downloads · Cars · Settings)
+                                                   NavHost (type-safe routes, navigation-compose)
+```
+
+- **Screens never touch `AppGraph`.** They get a `PhoneBackend` (`phone/PhoneBackend.kt`):
+  - the **real** `AccountStore`, `AuthRepository`, `CarProfileStore`, `PhoneSettingsStore` (tests give them in-memory storage and a fake `AuthGateway`);
+  - two small interfaces, `PhoneLibrary` (browse) and `PhoneDownloads`, so the SDK and Media3 can be faked.
+- **One view model per screen**, created with `viewModel { … }` and scoped to its navigation entry. State is a `StateFlow`; one-off messages are a `Flow<String>` shown in the shared snackbar.
+- **Pure logic lives in `PhoneLogic.kt`** (no Android): size estimates, download options, status wording, formatting, server warnings.
+- **Root state is data-driven** (`AppViewModel`): setup not seen → checklist; no active account → add account; else the tabs. Signing in, or removing the last account, switches screens by itself.
+
+| Route | Screen | View model |
+|---|---|---|
+| `BrowseRoute` (start) | libraries + Search button | `LibrariesViewModel` |
+| `GridRoute(id, name, libraryType?)` | poster grid: a library, or inside a collection/folder | `GridViewModel` (pages of 60; loads more as the end scrolls into view) |
+| `SeriesRoute` | season chips, "Download season", episodes | `SeriesViewModel` |
+| `ItemRoute` | one film: poster, details, Download | `ItemViewModel` |
+| `SearchRoute` | search as you type (400 ms pause) | `SearchViewModel` |
+| `DownloadsRoute` | downloads manager | `DownloadsViewModel` |
+| `CarsRoute` | car profiles | `CarsViewModel` |
+| `SettingsRoute` → `AccountsRoute`, `AddAccountRoute`, `SetupGuideRoute`, `LicencesRoute` | settings and friends | `SettingsViewModel`, `AddAccountViewModel` |
+
+- **Tabs:** Browse is home; Back from another tab returns to it. Tapping a tab goes to that tab's first screen.
+- **Switching account** (top-bar menu, or after adding one) resets navigation to a fresh Browse — a different account is a different library.
+
+### 12.3 Add account
+
+1. **Server:** whatever is typed goes to `AuthRepository.findServer` (normalise + `/System/Info/Public`). The server's **name, version and address** are shown; `serverWarnings()` adds a warning for old/unknown versions or plain HTTP. **Jellyfin 12.4 shows no warning.**
+2. **Quick Connect** (`AddAccountViewModel.startQuickConnect`): collects `AuthRepository.quickConnect` and maps it to `QuickConnectUi`:
+   - `Starting` → `Code` (56 sp monospace; read out digit by digit) → `Authenticating`;
+   - `TimedOut` (5 min) → "Get a new code";
+   - `Failed` → the reason, and **"Use username and password"** when Quick Connect is switched off on the server.
+   - **Cancel** cancels the collection, which stops the polling.
+3. **Password:** `signInWithPassword`. 401 → "Wrong username or password." The password is held in memory only (never in saved state).
+4. Success resets the form and emits `signedIn`; the saved, active account does the rest.
+
+### 12.4 Download flow (`DownloadRequester`, shared by the film and series screens)
+
+1. **Download** (or **Download season**) → anything already in the downloads is left out → the dialog opens with **720p selected** (`DownloadChoice.DEFAULT`).
+2. **Sizes** (`DownloadChoice`):
+   - 720p ≈ **min(4 Mbps, file bitrate) × running time** — shown at once from the running time.
+   - Original = the **file size the server reports** (`JellyfinRepository.sourceInfo`), else bitrate × running time. "Checking size…" until it arrives; "Size unknown" if it cannot be read.
+   - A season shows the total, or "Size unknown" if any episode's is.
+3. **Original needs permission:** if `MediaEntry.canDownload` is false the option is **disabled and says why** (ask the server owner for "Allow media downloads", or use 720p).
+4. **Confirm** → on Android 13+ the **`POST_NOTIFICATIONS`** prompt first (only while not granted). The download goes ahead **whatever the answer** — the permission only decides whether the progress notification shows; a refusal is mentioned in the result message.
+5. Downloads are queued one at a time (`DownloadRepo.enqueue`); a season **stops at the first failure** and says how far it got.
+6. Browse then shows a badge ("Downloading 42%", "Downloaded") instead of the button.
+
+### 12.5 Downloads manager
+
+- Live list from `DownloadRepo.downloads` (newest first): poster, title, quality, server, status line, progress bar.
+- **Pause / Resume** (queued, downloading, paused) · **Retry** (failed) · **Delete** (always, with a confirmation).
+- **Storage:** "Downloads use X · Y free", measured whenever a download starts, finishes or goes, and every 5 s while one is running.
+- Original downloads the server said this phone cannot direct-play carry a **warning** (`playableOnThisPhone == false`).
+- `MainActivity.onStart` calls **`graph.downloads.resumePending()`**.
+
+### 12.6 When the access token changes
+
+Stage 1 risk: a 720p download's address has the access token inside it (`ApiKey=`), so a new token strands unfinished downloads.
+
+| Layer | What happens |
+|---|---|
+| `DownloadRepo.restartStale()` | Finds the active account's **unfinished 720p** downloads whose address carries a token that is **not** the account's current one (`hasStaleToken`, unit-tested) and re-queues each from scratch with a fresh address. |
+| `AppViewModel.checkDownloadsAfterSignIn()` | Runs it whenever the active account changes while the app is on screen (so: after every sign-in, and at start-up). Says "Restarted N unfinished downloads…", or — if the server cannot be reached — tells the user to use **Retry**. |
+| Retry button | `DownloadRepo.retry` → `enqueue`, which **discards the old partial data first** and asks the server for a new address. Only as the account that made the download; otherwise the message says which account to switch to. |
+
+- Original downloads authenticate by header (`AuthHeaderInterceptor`) and are unaffected.
+- In practice Jellyfin hands the **same token** back to the same device and user, so this is a safety net.
+
+### 12.7 Layout and accessibility
+
+- **Edge-to-edge** (`enableEdgeToEdge`, dark system bars). The scaffold uses `WindowInsets.safeDrawing`; forms use `imePadding`; the activity has `windowSoftInputMode="adjustResize"`.
+- **Portrait and landscape:** every screen scrolls; grids are adaptive (`GridCells.Adaptive(112.dp)`); content is capped at 840 dp wide and centred.
+- **Large text:** no fixed heights on text containers — `heightIn(min = …)` only.
+- **Touch targets ≥ 48 dp;** primary buttons 56 dp. Radio rows are selectable as a whole row.
+- **Screen readers:** icons that carry meaning have descriptions (decorative ones are null); headings are marked; status lines are live regions; the Quick Connect code is spelt out.
+
+### 12.8 Tests
+
+- **JVM:** see §10 (`phone/…`), all on `FakePhone`.
+- **On device — `PhoneUiTest`** (Compose UI test; the whole `PhoneApp` on the fake data layer):
+  - first run → checklist → server check → **Quick Connect** code → approval → tabs;
+  - Quick Connect **cancel**, wrong then right **password**; unreachable server; **account switcher**;
+  - **download dialog: 720p pre-selected**, sizes, Original chosen, Original disabled with the explanation;
+  - **downloads list:** storage line, downloading / downloaded / failed rows, Pause, Retry, Delete with confirmation;
+  - Cars and Settings tabs, setup checklist from Settings.
+- Fakes shared by both: `app/src/sharedTest/java` (added to the `test` and `androidTest` source sets).
+
+### 12.9 Risks to check on the real phone
+
+1. **Nothing here has talked to the real server.** The release build was driven end to end on the emulator against a **local stand-in server** (real SDK, real Media3 downloads: Quick Connect sign-in, browse, a 720p HLS download, an Original download, pause/resume, app restart, remove account) — but the stand-in is hand-written, not Jellyfin. First real run: Quick Connect on Jellyfin 12.4, then browse, then one 720p download and one Original.
+2. **`sourceInfo`** relies on `GET /Items/{id}` returning `MediaSources` with `Size`/`Bitrate` (it does on 10.11 and 12.4 per the spec). If missing, the dialog shows "Size unknown" — nothing breaks.
+3. **Pause/Resume of a 720p download** depends on the server restarting the transcode mid-way (§9 risk 9). If a resumed download fails, Retry starts it again.
+4. **Notification prompt:** only on Android 13+, only before a download. If "Don't allow" is chosen twice Android stops asking — downloads still work; progress is in the Downloads tab.
+5. **"Open Android Auto app info"** opens the system page for `com.google.android.projection.gearhead`; on a phone without Android Auto it shows a note instead.
+6. **Search** finds films, series and episodes by name; a found episode opens its series.
+7. **Removing an account keeps its downloads** (they still play offline). Watch progress for them cannot be sent until that account is added again.
+
+### 12.10 Stage 1/2 changes made in Stage 3
+
+| Change | Why |
+|---|---|
+| `ServerCompatibility.of`: 10.10–12.x `SUPPORTED`, below 10.10 `TOO_OLD`, 13+ `NEWER_UNTESTED` (+ `ServerUrlTest`) | The owner's server is 12.4 and the audit found it compatible; it was wrongly warned about |
+| **`jellyfinCall` runs every SDK call on `Dispatchers.IO`** (+ `MainThreadNetworkTest`) | Crash fix for car and phone: §7.12 |
+| `JellyfinRepository.sourceInfo` + `SourceInfo` model (+ fake-server test) | Download size estimates |
+| `DownloadRepo`: `pause`, `resume`, `retry`, `restartStale`, `hasStaleToken`; `enqueue` now replaces an existing download of the same item | Downloads manager; clean restart after a token change |
+| `CarProfile.lastUsedAtMs`, `CarProfileStore.markUsed`; `CarProfileSession` calls it on connect | "Last used" in the Cars tab |
+| `AppGraph.phoneSettings` (`phone-settings.json`) | Remembers that the setup checklist has been read |
+| `MainActivity` rewritten; `AAFinTheme` moved to `phone/ui/Theme.kt`; `phone_placeholder_message` removed; manifest `windowSoftInputMode="adjustResize"` | The real phone app |
+| Build: `ui-test-junit4` (androidTest), `ui-test-manifest` (debug only), `src/sharedTest/java` source dir; `InMemoryDataStore` moved there | Compose UI tests and shared fakes |
+| New drawable `ic_phone_car` | Cars tab icon |

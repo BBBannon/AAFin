@@ -20,6 +20,8 @@ data class CarProfile(
     val key: String,
     val name: String,
     val quality: QualityTier = QualityTier.DEFAULT,
+    /** When this car last connected (epoch milliseconds); null if not recorded yet. */
+    val lastUsedAtMs: Long? = null,
 )
 
 /** Everything [CarProfileStore] persists. */
@@ -59,6 +61,9 @@ class CarProfileStore(private val store: DataStore<CarProfilesState>) {
     suspend fun rename(key: String, name: String) = update(key) { it.copy(name = name.trim().ifBlank { it.name }) }
 
     suspend fun setQuality(key: String, quality: QualityTier) = update(key) { it.copy(quality = quality) }
+
+    /** Records that the car with [key] has just connected ("last used" on the phone). */
+    suspend fun markUsed(key: String, nowMs: Long = System.currentTimeMillis()) = update(key) { it.copy(lastUsedAtMs = nowMs) }
 
     suspend fun remove(key: String) {
         store.updateData { state -> state.copy(profiles = state.profiles.filterNot { it.key == key }) }

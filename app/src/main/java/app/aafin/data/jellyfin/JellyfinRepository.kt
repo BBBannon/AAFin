@@ -19,7 +19,7 @@ import org.jellyfin.sdk.model.serializer.toUUID
 /**
  * Browsing the active account's Jellyfin library.
  *
- * Every function suspends, runs its network call off the main thread (OkHttp), returns
+ * Every function suspends, runs its network call off the main thread (`jellyfinCall`), returns
  * app-level models and throws [JellyfinException] on failure - including
  * `NOT_SIGNED_IN` when there is no active account.
  */
@@ -151,6 +151,13 @@ class JellyfinRepository(
     /** Full detail for one item, including the latest resume position. */
     suspend fun item(itemId: String): MediaEntry = call { api, account ->
         api.userLibraryApi.getItem(itemId = itemId.toUUID(), userId = account.userId.toUUID()).content.toMediaEntry()
+    }
+
+    /** Size and bitrate of the file behind a film or episode, for download size estimates. */
+    suspend fun sourceInfo(itemId: String): SourceInfo = call { api, account ->
+        val source = api.userLibraryApi.getItem(itemId = itemId.toUUID(), userId = account.userId.toUUID())
+            .content.mediaSources?.firstOrNull()
+        SourceInfo(sizeBytes = source?.size?.takeIf { it > 0 }, bitrate = source?.bitrate?.takeIf { it > 0 })
     }
 
     /**

@@ -24,6 +24,8 @@ import app.aafin.data.playback.SdkPlaystateGateway
 import app.aafin.data.playback.WorkManagerPositionQueue
 import app.aafin.data.profiles.CarProfileStore
 import app.aafin.data.profiles.CarProfilesState
+import app.aafin.phone.PhoneSettings
+import app.aafin.phone.PhoneSettingsStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -55,6 +57,15 @@ class AppGraph(context: Context) {
         CarProfileStore(
             jsonDataStore(appContext.dataStoreFile("car-profiles.json"), CarProfilesState.serializer(), CarProfilesState()) {
                 Log.e(TAG, "Saved car profiles were unreadable and have been reset")
+            },
+        )
+    }
+
+    /** Phone-only settings (whether the setup checklist has been read). */
+    val phoneSettings: PhoneSettingsStore by lazy {
+        PhoneSettingsStore(
+            jsonDataStore(appContext.dataStoreFile("phone-settings.json"), PhoneSettings.serializer(), PhoneSettings()) {
+                Log.e(TAG, "Saved phone settings were unreadable and have been reset")
             },
         )
     }

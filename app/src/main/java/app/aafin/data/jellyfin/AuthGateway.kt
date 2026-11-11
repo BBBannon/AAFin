@@ -21,15 +21,20 @@ data class ServerInfo(
     val isSecure: Boolean get() = url.startsWith("https://", ignoreCase = true)
 }
 
-/** How well the bundled Jellyfin SDK (1.8.x, generated for server 10.11) matches a server version. */
+/**
+ * How well the bundled Jellyfin SDK (1.8.x, generated for server 10.11) matches a server version.
+ *
+ * Every endpoint AAFin calls is the same on the wire from 10.10 to 12.4 (audited against the
+ * 10.11 and 12.4 OpenAPI specs and server source), so that whole range counts as supported.
+ */
 enum class ServerCompatibility {
-    /** Jellyfin 10.11.x: the version the SDK targets. */
+    /** Jellyfin 10.10 to 12.x. */
     SUPPORTED,
 
-    /** Older than 10.11: may work but is not supported by the SDK. */
+    /** Older than 10.10: may work but is not supported. */
     TOO_OLD,
 
-    /** A newer major line than the SDK was generated for: expected to work, not guaranteed. */
+    /** A newer major line than any that has been checked (13+): expected to work, not guaranteed. */
     NEWER_UNTESTED,
 
     /** The server did not report a parseable version. */
@@ -41,8 +46,8 @@ enum class ServerCompatibility {
             val major = parts.getOrNull(0) ?: return UNKNOWN
             val minor = parts.getOrNull(1) ?: return UNKNOWN
             return when {
-                major < 10 || (major == 10 && minor < 11) -> TOO_OLD
-                major == 10 -> SUPPORTED
+                major < 10 || (major == 10 && minor < 10) -> TOO_OLD
+                major <= 12 -> SUPPORTED
                 else -> NEWER_UNTESTED
             }
         }

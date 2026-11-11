@@ -11,6 +11,7 @@ import app.aafin.data.jellyfin.JellyfinRepository
 import app.aafin.data.jellyfin.LibraryType
 import app.aafin.data.jellyfin.QuickConnectState
 import app.aafin.data.jellyfin.SdkAuthGateway
+import app.aafin.data.jellyfin.SourceInfo
 import app.aafin.data.jellyfin.ServerCompatibility
 import app.aafin.data.playback.AuthHeaderInterceptor
 import app.aafin.data.playback.CodecCapabilities
@@ -83,6 +84,13 @@ class JellyfinSdkIntegrationTest {
         "ProductionYear":2008,"Overview":"A rabbit.","CanDownload":true,"ImageTags":{"Primary":"ptag"},"BackdropImageTags":["btag"],
         "UserData":${userData(18_000_000_000, false)},"SomeFieldFromTheFuture":{"x":1}}"""
 
+    /** A single item as `GET /Items/{id}` returns it: with its media sources. */
+    private val movieDetailJson = movieJson.dropLast(1) + ""","MediaSources":[{"Protocol":"File","Id":"$movieId","Type":"Default",
+        "Container":"mkv","Size":8500000000,"Bitrate":9440000,"IsRemote":false,"ReadAtNativeFramerate":false,"IgnoreDts":false,
+        "IgnoreIndex":false,"GenPtsInput":false,"SupportsTranscoding":true,"SupportsDirectStream":true,"SupportsDirectPlay":true,
+        "IsInfiniteStream":false,"RequiresOpening":false,"RequiresClosing":false,"RequiresLooping":false,"SupportsProbing":true,
+        "HasSegments":false,"TranscodingSubProtocol":"http"}]}"""
+
     private val episodeJson = """{"Name":"Pilot","Id":"22222222333344445555666666666666","Type":"Episode","MediaType":"Video",
         "SeriesName":"Testing Times","SeriesId":"$seriesId","SeasonId":"33333333444455556666777777777777","IndexNumber":1,"ParentIndexNumber":2,
         "SeriesPrimaryImageTag":"stag","RunTimeTicks":13200000000}"""
@@ -134,6 +142,7 @@ class JellyfinSdkIntegrationTest {
                     path.startsWith("/jf/Shows/") && path.endsWith("/Episodes") ->
                         json("""{"Items":[$episodeJson],"TotalRecordCount":1,"StartIndex":0}""")
                     path == "/jf/Items/$movieIdDashed/PlaybackInfo" -> json(playbackInfoJson)
+                    path == "/jf/Items/$movieIdDashed" -> json(movieDetailJson)
                     path.startsWith("/jf/Sessions/Playing") -> MockResponse().setResponseCode(204)
                     path == "/jf/Videos/$movieIdDashed/stream" -> MockResponse().setBody("video-bytes")
                     else -> MockResponse().setResponseCode(404)
@@ -284,6 +293,18 @@ class JellyfinSdkIntegrationTest {
         assertEquals(1, repository.search("  bunny ").size)
         assertEquals("bunny", lastRequest("/Items").requestUrl!!.queryParameter("searchTerm"))
         assertTrue(repository.search("   ").isEmpty())
+    }
+
+    @Test
+    fun `item detail and file size are read for the download dialog`() = runBlocking {
+        signIn()
+
+        val item = repository.item(movieId)
+        assertEquals("Big Buck Bunny", item.name)
+        assertTrue(item.canDownload)
+
+        assertEquals(SourceInfo(sizeBytes = 8_500_000_000L, bitrate = 9_440_000), repository.sourceInfo(movieId))
+        assertEquals(userIdDashed, lastRequest("/Items/$movieIdDashed").requestUrl!!.queryParameter("userId"))
     }
 
     @Test

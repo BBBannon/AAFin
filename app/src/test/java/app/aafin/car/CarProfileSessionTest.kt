@@ -11,6 +11,7 @@ import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Test
 
 /** Car detection: model first, screen second, and a timeout so a silent car never blocks playback. */
@@ -28,6 +29,7 @@ class CarProfileSessionTest {
         val profile = store.profiles.first().single()
         assertEquals("model:dacia|duster|2025", profile.key)
         assertEquals("Dacia Duster", profile.name)
+        assertNotNull("connecting records when the car was last used", profile.lastUsedAtMs)
     }
 
     @Test
