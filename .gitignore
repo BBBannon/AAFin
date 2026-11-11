@@ -11,3 +11,4 @@ test-credentials.properties
 .DS_Store
 captures/
 .kotlin/
+releases/
