@@ -289,7 +289,8 @@ class SearchScreen(carContext: CarContext, env: CarEnv, firstStep: Int) : CarScr
                 else -> "Nothing found for “$query”."
             }
             val items = ItemList.Builder().setNoItemsMessage(message)
-            results.forEach { entry ->
+            // The car's limit can drop after the search was made (it is lower while driving).
+            results.take(Paging.usableLimit(env.limits.list, LIST_CAP)).forEach { entry ->
                 val poster = posters.icon(entry.id)
                 items.addItem(
                     row(

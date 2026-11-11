@@ -46,7 +46,6 @@ class AAFinSession : Session() {
             scope = lifecycleScope,
             playback = backend.playback,
             player = { graph.playback.player },
-            togglePlayPause = backend::togglePlayPause,
             seekBy = backend::seekBy,
             onSurface = profile::onSurface,
         )

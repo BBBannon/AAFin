@@ -58,7 +58,6 @@ class VideoSurfaceRendererTest {
     private lateinit var renderer: VideoSurfaceRenderer
     private val readerThread = HandlerThread("frames").apply { start() }
     private val screens = mutableListOf<Screen>()
-    private var toggles = 0
     private val seeks = mutableListOf<Long>()
 
     /** A stand-in for the car's screen: a surface whose latest frame can be read back. */
@@ -127,7 +126,6 @@ class VideoSurfaceRendererTest {
             scope = scope,
             playback = playback,
             player = { player },
-            togglePlayPause = { toggles++ },
             seekBy = { seeks += it },
         )
     }
@@ -228,10 +226,11 @@ class VideoSurfaceRendererTest {
         onMain { renderer.onSurfaceAvailable(third.container()) }
         await("video on the third surface") { third.pixel(320, 180).isGreen() }
 
-        // A late "destroyed" for the surface that was replaced must not take the current one down.
+        // "Destroyed" always takes the window down, whatever container comes with it: a real host
+        // never sends back the same object, size or density (see VideoSurfaceLifecycleTest).
         onMain {
             renderer.onSurfaceDestroyed(second.container())
-            assertTrue(renderer.isShowing)
+            assertFalse(renderer.isShowing)
         }
 
         // After release nothing is created, whatever arrives.
@@ -282,20 +281,18 @@ class VideoSurfaceRendererTest {
             renderer.onScroll(-300f, 0f)
             renderer.onFling(900f, 0f)
         }
-        assertEquals(0, toggles)
         assertTrue(seeks.isEmpty())
 
         startVideo()
-        // Playback has just started, so the overlay is up: a tap pauses.
-        onMain { renderer.onClick(400f, 240f) }
-        assertEquals(1, toggles)
-
-        // Once the overlay has faded, the first tap only brings it back; the second pauses.
-        Thread.sleep(OverlayRule.AUTO_HIDE_MS + 1_000)
-        onMain { renderer.onClick(400f, 240f) }
-        assertEquals(1, toggles)
-        onMain { renderer.onClick(400f, 240f) }
-        assertEquals(2, toggles)
+        // Playback has just started, so the overlay is up: a tap hides it, the next brings it
+        // back. A tap never pauses - that is the button's job.
+        onMain {
+            assertTrue(renderer.isOverlayVisible)
+            renderer.onClick(400f, 240f)
+            assertFalse(renderer.isOverlayVisible)
+            renderer.onClick(400f, 240f)
+            assertTrue(renderer.isOverlayVisible)
+        }
 
         // Dragging a finger 400 px to the right (half the screen) seeks forward 90 s on release.
         onMain {

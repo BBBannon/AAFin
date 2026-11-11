@@ -28,6 +28,7 @@ import app.aafin.data.playback.StreamTrack
 import app.aafin.data.playback.SubtitleDelivery
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
@@ -38,7 +39,8 @@ import kotlinx.coroutines.launch
  *
  * - Action strip: Back, −10 s, Play/Pause, +30 s (the template allows four).
  * - Map action strip (car API 2+): Options, plus the standard pan action - without it the host
- *   does not pass taps and drags on the picture to the app.
+ *   does not pass taps and drags on the picture to the app. A tap only shows or hides the
+ *   overlay; play/pause is the button's job alone.
  *
  * The picture, title, progress bar and messages are drawn on the surface by `VideoSurfaceRenderer`;
  * this screen only redraws when the play/pause button or the error state changes, never per second.
@@ -70,10 +72,16 @@ class PlayerScreen(
         })
         scope.launch { start(first) }
         scope.launch {
-            env.backend.playback.map { Face(it.isPlaying || it.isBuffering || it.isLoading, it.error?.message) }
+            // The button shows what pressing it will do, so it follows "told to play", not
+            // "frames are moving": paused-while-buffering must still offer Play.
+            env.backend.playback.map { Face(it.isLoading || (it.playWhenReady && !it.isEnded), it.error?.message) }
                 .distinctUntilChanged()
-                .collect {
+                .collectLatest {
                     face = it
+                    invalidate()
+                    // Once more when things have settled: on the desktop head unit the strip kept
+                    // its old icon after a pause, i.e. a refresh sent mid-touch can be lost.
+                    delay(FACE_SETTLE_MS)
                     invalidate()
                 }
         }
@@ -189,6 +197,7 @@ class PlayerScreen(
 
     private companion object {
         const val UP_NEXT_SECONDS = 8
+        const val FACE_SETTLE_MS = 1_000L
     }
 }
 

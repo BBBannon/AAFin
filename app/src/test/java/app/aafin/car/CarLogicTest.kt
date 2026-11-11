@@ -246,9 +246,7 @@ class CarLogicTest {
     }
 
     @Test
-    fun `a tap brings the overlay back before it pauses`() {
-        assertFalse(OverlayRule.tapTogglesPlayback(overlayVisible = false))
-        assertTrue(OverlayRule.tapTogglesPlayback(overlayVisible = true))
+    fun `the overlay only times out during playback`() {
         assertTrue(OverlayRule.mayAutoHide(isPlaying = true))
         assertFalse(OverlayRule.mayAutoHide(isPlaying = false))
     }

@@ -44,8 +44,8 @@ import kotlin.math.abs
  * and windows and the player must be touched there.
  *
  * The callbacks are written to be safe in any order: a second "available" without a "destroyed",
- * a "destroyed" for a surface we never used, area changes before any surface, and anything at
- * all after [release].
+ * a "destroyed" before any "available" (or twice), area changes before any surface, and anything
+ * at all after [release]. A "destroyed" always takes the window down: see [onSurfaceDestroyed].
  *
  * @param player the ExoPlayer; only asked for once there is a surface and something to play.
  * @param onSurface told the size of each usable surface (the car profile falls back to it).
@@ -55,7 +55,6 @@ class VideoSurfaceRenderer(
     private val scope: CoroutineScope,
     private val playback: StateFlow<PlaybackState>,
     private val player: () -> Player,
-    private val togglePlayPause: () -> Unit,
     private val seekBy: (Long) -> Unit,
     private val onSurface: (SurfaceSpec) -> Unit = {},
 ) : SurfaceCallback, VideoOverlay {
@@ -118,13 +117,19 @@ class VideoSurfaceRenderer(
     }
 
     override fun onSurfaceDestroyed(surfaceContainer: SurfaceContainer) {
-        Log.i(TAG, "Surface destroyed: ${surfaceContainer.width}x${surfaceContainer.height}")
-        val current = container
-        val isCurrent = current != null && current.width == surfaceContainer.width &&
-            current.height == surfaceContainer.height && current.dpi == surfaceContainer.dpi
+        Log.i(TAG, "Surface destroyed: ${surfaceContainer.width}x${surfaceContainer.height} @${surfaceContainer.dpi}dpi")
         // Every Surface object handed to the app has to be released, including this copy.
-        if (surfaceContainer.surface !== current?.surface) surfaceContainer.surface?.release()
-        if (isCurrent) tearDown() else Log.w(TAG, "That was not the surface in use; keeping the current one")
+        if (surfaceContainer.surface !== container?.surface) surfaceContainer.surface?.release()
+        // An app has one surface at a time, so this is always the one in use - whatever the
+        // container says. It crosses a process boundary, so its Surface is never the same object
+        // as the one from onSurfaceAvailable, and real hosts do not repeat the size and density
+        // faithfully (the desktop head unit reports a different dpi here). Nothing may be drawn
+        // once this returns; the next onSurfaceAvailable builds everything again.
+        if (container != null || virtualDisplay != null || presentation != null) {
+            tearDown()
+        } else {
+            Log.d(TAG, "Nothing was showing on it")
+        }
     }
 
     override fun onVisibleAreaChanged(visibleArea: Rect) {
@@ -232,6 +237,9 @@ class VideoSurfaceRenderer(
         render()
     }
 
+    /** True while the title and progress bar are (or would be) drawn over the picture. */
+    internal val isOverlayVisible: Boolean get() = frame().overlayVisible
+
     override fun showOverlay() {
         overlayTimed = true
         hideOverlay?.cancel()
@@ -270,10 +278,17 @@ class VideoSurfaceRenderer(
     override fun onClick(x: Float, y: Float) {
         val state = playback.value
         if (released || !state.hasMedia || state.error != null) return
-        val toggles = OverlayRule.tapTogglesPlayback(frame().overlayVisible)
-        Log.d(TAG, "Tap: ${if (toggles) "play/pause" else "show overlay"}")
-        if (toggles) togglePlayPause()
-        showOverlay()
+        // A tap only shows or hides the title and progress bar. It never pauses: a finger aimed
+        // at one of the host's buttons often lands on the picture instead. Play/pause is the button.
+        if (overlayTimed) {
+            Log.d(TAG, "Tap: hide overlay")
+            hideOverlay?.cancel()
+            overlayTimed = false
+            render()
+        } else {
+            Log.d(TAG, "Tap: show overlay")
+            showOverlay()
+        }
     }
 
     override fun onScroll(distanceX: Float, distanceY: Float) {

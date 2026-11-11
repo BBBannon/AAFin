@@ -20,6 +20,7 @@ import app.aafin.data.jellyfin.JellyfinException
 import app.aafin.data.jellyfin.MediaEntry
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -29,6 +30,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 
 /** A playback failure in a form that is safe to show: no URLs, no tokens. */
 data class PlaybackError(
@@ -46,6 +48,11 @@ data class PlaybackState(
     val positionMs: Long = 0,
     val durationMs: Long = 0,
     val isPlaying: Boolean = false,
+    /**
+     * The player has been told to play (it may still be buffering). False once paused - this,
+     * not [isPlaying], is what a play/pause button should show.
+     */
+    val playWhenReady: Boolean = false,
     /** The player has run out of data and is waiting for more. */
     val isBuffering: Boolean = false,
     /** Asking the server how to play (before the player has anything to buffer). */
@@ -314,9 +321,15 @@ class PlaybackController(
         scope.launch { reporter.started(snapshot) }
     }
 
-    /** Re-asks the server how to play the current item with a changed [request], then carries on from the same position. */
-    private suspend fun restartStream(request: PlaybackRequest) {
-        val current = session ?: return
+    /**
+     * Re-asks the server how to play the current item with a changed [request], then carries on from the same position.
+     *
+     * Not cancellable: it is called from a screen's coroutine, and a screen closed half-way
+     * through (Back pressed while a quality change is in flight) must not leave the player
+     * stopped, or "Loading…" showing, for good. [generation] still stops it when playback is replaced.
+     */
+    private suspend fun restartStream(request: PlaybackRequest) = withContext(NonCancellable) {
+        val current = session ?: return@withContext
         val myGeneration = generation
         _state.update { it.copy(isLoading = true) }
         val resolved = try {
@@ -325,7 +338,7 @@ class PlaybackController(
             if (myGeneration == generation) _state.update { it.copy(isLoading = false) }
             throw e
         }
-        if (myGeneration != generation) return
+        if (myGeneration != generation) return@withContext
 
         val player = player
         val position = player.currentPosition
@@ -339,7 +352,7 @@ class PlaybackController(
             current.stopReported = true
             reporter.stopped(lastSnapshot)
         }
-        if (myGeneration != generation) return
+        if (myGeneration != generation) return@withContext
         begin(current.entry, resolved, position, playWhenReady)
     }
 
@@ -414,6 +427,7 @@ class PlaybackController(
                 positionMs = player.currentPosition.coerceAtLeast(0),
                 durationMs = duration,
                 isPlaying = player.isPlaying,
+                playWhenReady = player.playWhenReady,
                 isBuffering = player.playbackState == Player.STATE_BUFFERING,
                 isEnded = player.playbackState == Player.STATE_ENDED,
                 playMethod = plan.playMethod,
@@ -517,7 +531,7 @@ class PlaybackController(
         reportStopped(current)
         ticker?.cancel()
         publish()
-        _state.update { it.copy(isLoading = false, isPlaying = false, isBuffering = false, error = error) }
+        _state.update { it.copy(isLoading = false, isPlaying = false, playWhenReady = false, isBuffering = false, error = error) }
     }
 
     private fun isDecoderError(code: Int): Boolean = code in DECODER_ERRORS

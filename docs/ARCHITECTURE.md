@@ -104,7 +104,7 @@ app.aafin
 ### 4.4 Playback — `PlaybackController` (`graph.playback`, main thread)
 
 - **`player: ExoPlayer`** — created on first access. Stage 2: `playerView.player = graph.playback.player`.
-- **`state: StateFlow<PlaybackState>`** — `item`, `title`, `positionMs`, `durationMs`, `isPlaying`, `isBuffering`, `isLoading`, `isEnded`, `error: PlaybackError?`, `playMethod`, `tier`, `audioTracks`, `subtitleTracks`, `audioStreamIndex`, `subtitleStreamIndex`, `isOffline`. Position refreshes once a second.
+- **`state: StateFlow<PlaybackState>`** — `item`, `title`, `positionMs`, `durationMs`, `isPlaying`, `playWhenReady` (what a play/pause button should show), `isBuffering`, `isLoading`, `isEnded`, `error: PlaybackError?`, `playMethod`, `tier`, `audioTracks`, `subtitleTracks`, `audioStreamIndex`, `subtitleStreamIndex`, `isOffline`. Position refreshes once a second.
 - **Start:** `suspend play(entry, tier, startPositionMs = entry.resumePositionMs): Boolean`
   - Plays a **completed download if one exists**, else streams within `tier`.
   - Returns false and sets `state.error` on failure (does not throw).
@@ -282,6 +282,7 @@ app.aafin
 | `car/CarProfileSessionTest` | car detection: model → screen → unknown, timeouts, quality read/write |
 | `car/CarBrowseScreensTest` | **Robolectric + `app-testing`**: Home (signed out, error, overflow), Library (empty, paging, error), Series, Downloads, Search, Accounts, budget restart |
 | `car/CarPlayerScreensTest` | player strips, error/retry, stop on exit, next-episode countdown, options and choices |
+| `car/VideoSurfaceLifecycleTest` | **Robolectric**, the real renderer: surface available → destroyed (as a real host sends it) → available again; destroyed twice / first; nothing after release |
 
 | `phone/PhoneLogicTest` | download size estimates, the Original / 720p options, formatting, car key wording, server warnings, stale-token detection |
 | `phone/AccountViewModelsTest` | add-account flow (server check, **Quick Connect states**, timeout, disabled, cancel, password), app state, **account switching** and removal, stale-download messages |
@@ -289,7 +290,7 @@ app.aafin
 
 - Car screen tests run against `FakeBackend` (`car/CarFakes.kt`) — no server, no head unit.
 - Phone tests run against `FakePhone` (`src/sharedTest/…/phone/PhoneFakes.kt`, shared with the on-device tests).
-- **224 unit tests** in total (84 data layer + 83 car + 57 phone).
+- **230 unit tests** in total (84 data layer + 89 car + 57 phone).
 
 **On-device tests:** `gradlew.bat connectedDebugAndroidTest` — `GraphSmokeTest` (Stage 1), **`VideoSurfaceRendererTest`** (§11.4), **`PhoneUiTest`** (§12.8) and **`MainThreadNetworkTest`** (§7.12) — 24 in total.
 
@@ -350,7 +351,7 @@ The next episode comes from the server's episode list, or from the downloads whe
 | Rows per list / items per grid (`ConstraintManager.getContentLimit`, often **6**) | Read on every build (`HostContentLimits`); capped at 100 rows / 48 posters; falls back to 6. |
 | More items than fit | Last slot becomes **"More…"** (opens the next page as a new screen, so Back returns to the previous page). Title shows "Films · 1–5 of 300". |
 | Series longer than one screen | Season list → one screen per season; a long season **starts at the next episode to watch**. |
-| Template refresh quota | Posters arrive in batches: at most one redraw every 750 ms (`PosterBoard`). The player template is redrawn **only** when the play/pause button or the error state changes — position, title and clock are drawn on the surface instead. |
+| Template refresh quota | Posters arrive in batches: at most one redraw every 750 ms (`PosterBoard`). The player template is redrawn **only** when the play/pause button or the error state changes (plus one repeat a second later, in case the host lost the first) — position, title and clock are drawn on the surface instead. |
 | Images are copied to the head unit | Posters are ≤ 144 × 216 px, RGB 565 (~60 KB each). |
 | Old hosts | Every newer API is guarded by `carContext.carAppApiLevel` (map strip/pan ≥ 2, content limits ≥ 2, car model ≥ 3). Touch callbacks are only ever *called* by hosts that support them. |
 
@@ -387,9 +388,9 @@ The next episode comes from the server's episode list, or from the downloads whe
 - the idle logo is drawn;
 - a 4:3 video on a 5:3 surface is **letterboxed, not stretched** (green in the middle, black bars at the sides);
 - the picture moves inside the visible area and grows back when the area does;
-- destroy → recreate at another size → replace without destroy → late "destroyed" for the old surface → release: all clean, playback carries on;
+- destroy → recreate at another size → replace without destroy → destroy → release: all clean, playback carries on;
 - **it keeps laying out and drawing with the phone's screen off**;
-- taps and drags drive play/pause and seek.
+- taps show and hide the overlay (never pause); drags seek.
 
 **Fermata Auto** was checked and is **not** a precedent: it uses the legacy `com.google.android.apps.auto.sdk.CarActivity` projection SDK, not the Car App Library.
 
@@ -417,7 +418,8 @@ The next episode comes from the server's episode list, or from the downloads whe
 |---|---|
 | Area change before any surface | Remembered, applied when the surface arrives |
 | Second "available" with no "destroyed" (size or DPI change) | Old window and display torn down, new ones built |
-| "Destroyed" for a surface that is not the current one | Its `Surface` copy is released; the current window stays |
+| "Destroyed", whatever container comes with it | **Always** takes the window and display down and releases both `Surface` copies. The container cannot be matched to the one from "available": it crosses a process boundary (new `Surface` object) and the desktop head unit sends a different dpi (Stage 4 fix; `VideoSurfaceLifecycleTest`) |
+| Host shows a list / grid / message over the player (e.g. Options) | The host may destroy the surface: the window goes, **sound carries on**; the next "available" (back on the player) rebuilds the window and re-attaches the player |
 | "Destroyed" twice / before any "available" | No-op |
 | Surface invalid or zero-sized | Skipped; wait for the next one |
 | Window creation throws (surface vanished mid-setup) | Logged, cleaned up, wait for the next one |
@@ -426,7 +428,7 @@ The next episode comes from the server's episode list, or from the downloads whe
 
 ### 11.7 Touch
 
-- **Tap** (`onClick`, car API 5+): overlay hidden → show it. Overlay showing → play/pause. The overlay stays up while paused.
+- **Tap** (`onClick`, car API 5+): shows the overlay, or hides it if it is showing. **A tap never plays or pauses** (Stage 4: taps aimed at the host's buttons landed on the picture and paused the video) — that is the strip button's job. The overlay stays up while paused.
 - **Sideways drag** (`onScroll`, car API 2+): seeks — a full screen width is 3 minutes; a live "+0:45" preview shows; applied when the finger stops (or on `onFling`). Mostly-vertical drags are ignored.
 - Nothing happens unless a video is loaded. All of it is optional: the strip buttons do the same jobs.
 

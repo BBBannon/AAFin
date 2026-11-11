@@ -112,7 +112,12 @@ class DownloadRepo(
             override fun onDownloadRemoved(downloadManager: DownloadManager, download: Download) = requestRefresh()
         })
         scope.launch {
-            reconcile()
+            try {
+                reconcile()
+            } catch (e: IOException) {
+                // The download index could not be read. Nothing is lost; tidying up waits for next time.
+                Log.w(TAG, "Could not check the downloads at start-up: ${e.javaClass.simpleName}")
+            }
             refresh()
         }
     }
@@ -235,7 +240,13 @@ class DownloadRepo(
     /** What the player needs to play [itemId] offline, or null unless its download has completed. */
     suspend fun offlineMedia(itemId: String): OfflineMedia? = withContext(Dispatchers.IO) {
         val metadata = metadataStore.load(itemId) ?: return@withContext null
-        val download = downloadManager.downloadIndex.getDownload(itemId)
+        val download = try {
+            downloadManager.downloadIndex.getDownload(itemId)
+        } catch (e: IOException) {
+            // An unreadable download index must not stop the item playing: it is streamed instead.
+            Log.w(TAG, "Could not look up the download of $itemId: ${e.javaClass.simpleName}")
+            null
+        }
             ?.takeIf { it.state == Download.STATE_COMPLETED }
             ?: return@withContext null
         OfflineMedia(
@@ -264,7 +275,13 @@ class DownloadRepo(
     suspend fun saveResumePosition(itemId: String, positionMs: Long) {
         withContext(Dispatchers.IO) {
             val metadata = metadataStore.load(itemId) ?: return@withContext
-            metadataStore.save(metadata.copy(resumePositionMs = positionMs))
+            try {
+                metadataStore.save(metadata.copy(resumePositionMs = positionMs))
+            } catch (e: IOException) {
+                // Typically a full disk. Called when playback stops, where there is nobody to
+                // tell and nothing to undo: the position is still queued for the server.
+                Log.w(TAG, "Could not save the resume position of $itemId: ${e.javaClass.simpleName}")
+            }
             cachedMetadata = null
         }
         refresh()
@@ -293,10 +310,16 @@ class DownloadRepo(
         // In-flight downloads carry live progress; completed/failed ones are only in the index.
         val live = downloadManager.currentDownloads.associateBy { it.request.id }
         val items = withContext(Dispatchers.IO) {
-            val recorded = recordedDownloads()
+            val recorded = try {
+                recordedDownloads()
+            } catch (e: IOException) {
+                // Runs every second while downloading: one failed read keeps the last list.
+                Log.w(TAG, "Could not read the download index: ${e.javaClass.simpleName}")
+                return@withContext null
+            }
             val metadata = cachedMetadata ?: metadataStore.all().also { cachedMetadata = it }
             metadata.map { toItem(it, live[it.itemId] ?: recorded[it.itemId]) }
-        }
+        } ?: return
         _downloads.value = items
         updateProgressTicker(items.any { it.status == DownloadStatus.DOWNLOADING || it.status == DownloadStatus.QUEUED })
     }

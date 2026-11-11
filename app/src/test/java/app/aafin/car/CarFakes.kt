@@ -78,7 +78,7 @@ class FakeBackend : CarBackend {
 
     override suspend fun play(entry: MediaEntry, tier: QualityTier): Boolean {
         played += entry to tier
-        playback.value = PlaybackState(item = entry, title = entry.displayTitle, isPlaying = playSucceeds, tier = tier)
+        playback.value = PlaybackState(item = entry, title = entry.displayTitle, isPlaying = playSucceeds, playWhenReady = playSucceeds, tier = tier)
         return playSucceeds
     }
 

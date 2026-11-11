@@ -5,6 +5,7 @@ import androidx.car.app.model.Action
 import androidx.car.app.model.ListTemplate
 import androidx.car.app.model.MessageTemplate
 import androidx.car.app.navigation.model.NavigationTemplate
+import app.aafin.R
 import app.aafin.car.screens.ChoiceScreen
 import app.aafin.car.screens.HomeScreen
 import app.aafin.car.screens.PlayerOptionsScreen
@@ -98,9 +99,37 @@ class CarPlayerScreensTest : CarScreenTestBase() {
         assertEquals(before, templatesSentBy(player).size)
 
         // Pausing does: the button changes.
-        backend.playback.update { it.copy(isPlaying = false) }
+        backend.playback.update { it.copy(isPlaying = false, playWhenReady = false) }
         idle()
         assertEquals(before + 1, templatesSentBy(player).size)
+
+        // ...and once more a second later, in case the host lost the first refresh.
+        advance(1_100)
+        assertEquals(before + 2, templatesSentBy(player).size)
+    }
+
+    @Test
+    fun `the button offers play whenever the player is paused and pause whenever it is not`() {
+        val player = show(PlayerScreen(carContext, env, film(1)))
+        fun buttonIcon() = player.template<NavigationTemplate>().actionStrip!!.actions[2].icon!!.icon!!.resId
+
+        assertEquals(R.drawable.ic_car_pause, buttonIcon())
+
+        // Buffering after a seek: still told to play, so still Pause - and no redraw.
+        val before = templatesSentBy(player).size
+        backend.playback.update { it.copy(isPlaying = false, isBuffering = true) }
+        idle()
+        assertEquals(R.drawable.ic_car_pause, buttonIcon())
+        assertEquals(before, templatesSentBy(player).size)
+
+        // Paused while still buffering: Play.
+        backend.playback.update { it.copy(playWhenReady = false) }
+        idle()
+        assertEquals(R.drawable.ic_car_play, buttonIcon())
+
+        backend.playback.update { it.copy(isPlaying = true, playWhenReady = true, isBuffering = false) }
+        idle()
+        assertEquals(R.drawable.ic_car_pause, buttonIcon())
     }
 
     @Test

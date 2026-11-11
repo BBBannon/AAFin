@@ -262,9 +262,6 @@ data class SurfaceInsets(val left: Int, val top: Int, val right: Int, val bottom
 object OverlayRule {
     const val AUTO_HIDE_MS = 4_000L
 
-    /** A tap on the video: bring the overlay back if it had gone, otherwise play/pause. */
-    fun tapTogglesPlayback(overlayVisible: Boolean): Boolean = overlayVisible
-
     /** The overlay stays up while paused, loading or failed; it only times out during playback. */
     fun mayAutoHide(isPlaying: Boolean): Boolean = isPlaying
 }
