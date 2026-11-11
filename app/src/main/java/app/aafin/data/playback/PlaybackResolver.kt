@@ -58,6 +58,17 @@ class PlaybackResolver(
      * @throws JellyfinException if signed out, the server is unreachable, or nothing is playable.
      */
     suspend fun resolveOnline(request: PlaybackRequest, title: String): ResolvedPlayback {
+        val plan = planOnline(request)
+        return ResolvedPlayback(plan, MediaItems.online(plan, title))
+    }
+
+    /**
+     * The network half of [resolveOnline]: asks the server and decides, without building a
+     * Media3 item. Used for downloads, which only need the plan.
+     *
+     * @throws JellyfinException as [resolveOnline].
+     */
+    suspend fun planOnline(request: PlaybackRequest): PlaybackPlan {
         val account = accountStore.active() ?: throw JellyfinException(JellyfinException.Kind.NOT_SIGNED_IN)
         val api = clients.forAccount(account)
 
@@ -68,8 +79,7 @@ class PlaybackResolver(
             response = playbackInfo(api, account.userId, effective)
         }
 
-        val plan = PlaybackDecision.decide(account.serverUrl, account.id, effective, response)
-        return ResolvedPlayback(plan, MediaItems.online(plan, title))
+        return PlaybackDecision.decide(account.serverUrl, account.id, effective, response)
     }
 
     fun resolveOffline(media: OfflineMedia, tier: QualityTier, subtitleStreamIndex: Int? = null): ResolvedPlayback {

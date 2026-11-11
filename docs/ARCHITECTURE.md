@@ -144,6 +144,7 @@ app.aafin
 ## 5. How playback is resolved
 
 1. `PlaybackResolver.resolveOnline` → `POST /Items/{id}/PlaybackInfo` with the `DeviceProfile` from `DeviceProfileBuilder` and `MaxStreamingBitrate` from the tier.
+   - `planOnline(request)` is the same without building a Media3 item (used by downloads and JVM tests).
 2. `PlaybackDecision.decide` (pure, unit-tested):
    - `SupportsDirectPlay` → `/Videos/{id}/stream?static=true&mediaSourceId=…` (**DIRECT_PLAY**)
    - else `TranscodingUrl` → HLS (**DIRECT_STREAM** if the server is only remuxing, else **TRANSCODE**)
@@ -185,7 +186,8 @@ app.aafin
 | OkHttp | 5.3.2 | the version the Jellyfin SDK depends on (Media3's OkHttp data source runs on it) |
 | Coil | 3.3.0 (`coil-compose`, `coil-network-okhttp`) | Kotlin 2.2 compatible |
 | coroutines / serialization-json | 1.10.2 / 1.9.0 | what the Jellyfin SDK depends on |
-| Tests | JUnit 4.13.2, coroutines-test, Turbine 1.2.1, Robolectric 4.16.1, androidx.test core 1.7.0 | Robolectric + `app-testing` are there for Stage 2 screen tests |
+| SLF4J | `slf4j-nop` 2.0.17 | required at run time by the Jellyfin SDK's logging (§7.10) |
+| Tests | JUnit 4.13.2, coroutines-test, Turbine 1.2.1, OkHttp MockWebServer 5.3.2, Robolectric 4.16.1, androidx.test core/runner 1.7.0, ext-junit 1.3.0 | Robolectric + `app-testing` are there for Stage 2 screen tests; runner + ext-junit for the on-device smoke test |
 
 - **Release:** R8/minify **off** (v1), signed from `keystore.properties` (git-ignored). Keystore: `C:\Users\Ben\.android-keys\aafin-release.jks`, alias `aafin`.
 - **To move to newer libraries later:** install platform android-36 and a newer Gradle first.
@@ -203,7 +205,8 @@ app.aafin
 7. **Media3 prefixes side-loaded subtitle track ids** (`"1:aafin-sub-3"`) when merging sources — the controller matches on the suffix.
 8. **DataStore's default file storage cannot overwrite on Windows** (`File.renameTo`). Unit tests therefore use the Okio storage with the same serializer (`testing/TestDataStores.kt`). Production on Android is unaffected.
 9. **Gradle 8.11.1 on Windows occasionally fails with "Could not move temporary workspace"** on a cold cache. Re-running the same command fixes it.
-10. **Car manifest names were checked against the library's own constants** (`androidx.car.app.CarAppService`, `androidx.car.app.category.NAVIGATION`, `androidx.car.app.minCarApiLevel`, `androidx.car.app.NAVIGATION_TEMPLATES`, `androidx.car.app.ACCESS_SURFACE`).
+10. **The Jellyfin SDK crashes on its first HTTP call without SLF4J.** It logs through kotlin-logging, whose Android build defaults to SLF4J but does not bring it in (`NoClassDefFoundError: org.slf4j.LoggerFactory`). Found by the on-device smoke test. Fixed with `org.slf4j:slf4j-nop` — which also keeps the SDK's request URLs (Quick Connect secrets, search terms) out of logcat. **Do not remove that dependency.**
+11. **Car manifest names were checked against the library's own constants** (`androidx.car.app.CarAppService`, `androidx.car.app.category.NAVIGATION`, `androidx.car.app.minCarApiLevel`, `androidx.car.app.NAVIGATION_TEMPLATES`, `androidx.car.app.ACCESS_SURFACE`).
 
 ---
 
@@ -224,7 +227,7 @@ app.aafin
 **For everyone**
 
 1. **Server version.** Untested against the real server (no credentials in Stage 1). If it runs **Jellyfin 12.x**, the 1.8.12 SDK is outside its supported range — basic calls should still work, but check sign-in, browse and PlaybackInfo first. Fix if needed: SDK 1.9.x → needs Kotlin 2.4 → probably a newer Gradle/AGP.
-2. **Nothing has yet played a real stream.** The resolver logic is unit-tested with handcrafted responses; ExoPlayer, HLS and downloads have not run end-to-end.
+2. **Nothing has yet played a real stream.** The SDK calls are tested against a fake server with handcrafted (Jellyfin-shaped) JSON, and the player/download objects are created on a real Android runtime — but ExoPlayer, HLS and downloads have not run end-to-end against a real server.
 3. **Two users of the same server on one phone:** media requests use the active account's token. Fine unless the two users have different library access.
 
 **Stage 2 (car)**
@@ -256,3 +259,10 @@ app.aafin
 | `AuthRepositoryTest` | Quick Connect state machine (success, disabled, timeout, cancel, blips), password, `findServer` |
 | `StoresTest` | car profiles get-or-create, accounts, download metadata JSON |
 | `ProgressReporterTest` | report queueing, URL building, auth-header host rule |
+| `JellyfinSdkIntegrationTest` | the **real SDK against a local fake server** (MockWebServer): request paths, auth header, request bodies (device profile, ticks), JSON decoding into app models |
+
+**On-device smoke test:** `gradlew.bat connectedDebugAndroidTest` (`app/src/androidTest/.../GraphSmokeTest.kt`).
+
+- Creates every `AppGraph` singleton on a real Android runtime: DataStore files, ExoPlayer + `MediaSession`, download cache/manager, WorkManager queue, the SDK's HTTP stack.
+- Needs no Jellyfin server. Leaves real accounts alone.
+- **It installs the debug build**, which is signed differently from the release build — on a phone that has the release APK it will refuse to install rather than overwrite. Use an emulator, or uninstall first.

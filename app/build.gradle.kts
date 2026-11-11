@@ -23,6 +23,8 @@ android {
         targetSdk = 35
         versionCode = 1
         versionName = "1.0"
+
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
     signingConfigs {
@@ -106,6 +108,10 @@ dependencies {
     implementation(libs.media3.session)
 
     implementation(libs.jellyfin.core)
+    // The Jellyfin SDK logs through kotlin-logging, which on Android needs SLF4J on the classpath
+    // (it is not a transitive dependency - without it the first API call crashes). The no-op
+    // binding also keeps request URLs, which can contain secrets, out of logcat.
+    implementation(libs.slf4j.nop)
     implementation(libs.okhttp)
     implementation(libs.coil.compose)
     implementation(libs.coil.network.okhttp)
@@ -116,4 +122,11 @@ dependencies {
     testImplementation(libs.robolectric)
     testImplementation(libs.androidx.test.core)
     testImplementation(libs.car.app.testing)
+    testImplementation(libs.okhttp.mockwebserver)
+
+    // On-device smoke tests: gradlew connectedDebugAndroidTest
+    androidTestImplementation(libs.junit)
+    androidTestImplementation(libs.androidx.test.core)
+    androidTestImplementation(libs.androidx.test.runner)
+    androidTestImplementation(libs.androidx.test.ext.junit)
 }

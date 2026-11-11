@@ -102,6 +102,9 @@ class PlaybackController(
         get() = createdPlayer ?: createPlayer().also { createdPlayer = it }
 
     private class ActiveSession(val entry: MediaEntry, var plan: PlaybackPlan) {
+        /** The start report has been sent; progress reports are held back until then. */
+        var startReported = false
+
         /** The server has been told this play session is over. */
         var stopReported = false
 
@@ -301,9 +304,14 @@ class PlaybackController(
         player.playWhenReady = playWhenReady
         publish()
 
-        val snapshot = snapshot(current)
-        scope.launch { reporter.started(snapshot) }
+        reportStarted(current)
         startTicker()
+    }
+
+    private fun reportStarted(current: ActiveSession) {
+        val snapshot = snapshot(current)
+        current.startReported = true
+        scope.launch { reporter.started(snapshot) }
     }
 
     /** Re-asks the server how to play the current item with a changed [request], then carries on from the same position. */
@@ -361,7 +369,7 @@ class PlaybackController(
 
     private fun reportProgress() {
         val current = session ?: return
-        if (current.stopReported) return
+        if (!current.startReported || current.stopReported) return
         val snapshot = snapshot(current)
         scope.launch { reporter.progress(snapshot) }
     }
@@ -477,8 +485,7 @@ class PlaybackController(
         if (!current.reachedEnd) return
         current.reachedEnd = false
         current.stopReported = false
-        val snapshot = snapshot(current)
-        scope.launch { reporter.started(snapshot) }
+        reportStarted(current)
         startTicker()
     }
 

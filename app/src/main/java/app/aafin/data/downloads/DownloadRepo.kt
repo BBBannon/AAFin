@@ -130,10 +130,7 @@ class DownloadRepo(
         val account = accountStore.active() ?: throw JellyfinException(JellyfinException.Kind.NOT_SIGNED_IN)
 
         val tier = if (quality == DownloadQuality.ORIGINAL) QualityTier.ORIGINAL else QualityTier.P720_4M
-        val plan = resolver.resolveOnline(
-            PlaybackRequest(entry.id, tier, forceTranscode = quality == DownloadQuality.P720),
-            entry.displayTitle,
-        ).plan
+        val plan = resolver.planOnline(PlaybackRequest(entry.id, tier, forceTranscode = quality == DownloadQuality.P720))
 
         val request = when (quality) {
             DownloadQuality.ORIGINAL ->
