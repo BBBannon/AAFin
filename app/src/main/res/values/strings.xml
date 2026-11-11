@@ -4,7 +4,6 @@
 
     <!-- Stage 1 placeholders -->
     <string name="phone_placeholder_message">AAFin — setup coming in Stage 3</string>
-    <string name="car_placeholder_message">AAFin — car screens coming in Stage 2</string>
 
     <!-- Downloads notification channel -->
     <string name="download_channel_name">Downloads</string>

@@ -1,7 +1,7 @@
-# AAFin — Architecture (Stage 1: foundation)
+# AAFin — Architecture (Stages 1–2: foundation + car app)
 
-**What exists now:** build, signing, manifest, logo, the whole data layer, unit tests, two placeholder screens.
-**What comes next:** Stage 2 = car UI (`app.aafin.car`). Stage 3 = phone UI (`app.aafin.phone`).
+**What exists now:** build, signing, manifest, logo, the whole data layer (Stage 1) and the **Android Auto car app** (Stage 2, §11). The phone UI is still a placeholder.
+**What comes next:** Stage 3 = phone UI (`app.aafin.phone`).
 
 Read `docs/SPEC.md` first. This file is the **contract between the data layer and the UI stages**.
 
@@ -25,7 +25,9 @@ Read `docs/SPEC.md` first. This file is the **contract between the data layer an
 app.aafin
 ├── AAFinApp            Application; AAFinApp.graph(context)
 ├── AppGraph            lazy singletons (see §3)
-├── car/                AAFinCarAppService, AAFinSession, PlaceholderScreen   ← Stage 2 builds here
+├── car/                AAFinCarAppService, AAFinSession, CarEnv (CarBackend…), CarLogic, CarProfileSession, Posters
+│   ├── render/         VideoSurfaceRenderer, VideoPresentation                 ← video on the car surface
+│   └── screens/        CarScreen (base), Home, Library, Series, EntryList, Downloads, Search, Accounts, Player, Options
 ├── phone/              MainActivity (+ AAFinTheme), placeholder               ← Stage 3 builds here
 └── data/
     ├── Ticks, JsonDataStore (AppJson, JsonSerializer, jsonDataStore)
@@ -230,11 +232,11 @@ app.aafin
 2. **Nothing has yet played a real stream.** The SDK calls are tested against a fake server with handcrafted (Jellyfin-shaped) JSON, and the player/download objects are created on a real Android runtime — but ExoPlayer, HLS and downloads have not run end-to-end against a real server.
 3. **Two users of the same server on one phone:** media requests use the active account's token. Fine unless the two users have different library access.
 
-**Stage 2 (car)**
+**Stage 2 (car)** — see §11.9 for the full, current list.
 
-4. **`PlayerView` in a `Presentation` on a `VirtualDisplay`** is the unproven core. Test early on the real head unit, and on the DHU.
-5. **NAVIGATION category without navigating.** Do not call `navigationStarted()`. Android Auto may still treat AAFin as the "default navigation app" after launch (it is the last nav app opened).
-6. **Template restrictions while driving** (list lengths, step count ≤ 5, refresh quota). Position updates every second must go to the Presentation overlay, **not** through `invalidate()`.
+4. **Rendering core:** now proven on an Android 14 emulator (§11.4), **not yet on a real head unit or the DHU**.
+5. **NAVIGATION category without navigating.** `navigationStarted()` is never called. Android Auto may still treat AAFin as the "default navigation app" after launch (it is the last nav app opened).
+6. **Template restrictions** are handled by design (§11.3) but the host's exact counting is not public.
 7. **`MediaSession` in the car:** steering-wheel routing with an active session but no media browser is unverified.
 8. **HDR / Dolby Vision** sources that direct-play may look wrong on the car surface. The decoder-error fallback will not catch a picture that merely looks wrong — consider a "force transcode" option.
 
@@ -261,8 +263,194 @@ app.aafin
 | `ProgressReporterTest` | report queueing, URL building, auth-header host rule |
 | `JellyfinSdkIntegrationTest` | the **real SDK against a local fake server** (MockWebServer): request paths, auth header, request bodies (device profile, ticks), JSON decoding into app models |
 
-**On-device smoke test:** `gradlew.bat connectedDebugAndroidTest` (`app/src/androidTest/.../GraphSmokeTest.kt`).
+| `car/CarLogicTest` | template budget, paging, row text, series layout, next episode, car key, seek gesture, surface insets |
+| `car/CarProfileSessionTest` | car detection: model → screen → unknown, timeouts, quality read/write |
+| `car/CarBrowseScreensTest` | **Robolectric + `app-testing`**: Home (signed out, error, overflow), Library (empty, paging, error), Series, Downloads, Search, Accounts, budget restart |
+| `car/CarPlayerScreensTest` | player strips, error/retry, stop on exit, next-episode countdown, options and choices |
+
+- Car screen tests run against `FakeBackend` (`car/CarFakes.kt`) — no server, no head unit.
+- **166 unit tests** in total (83 from Stage 1 + 83 for the car).
+
+**On-device tests:** `gradlew.bat connectedDebugAndroidTest` — `GraphSmokeTest` (Stage 1) and **`VideoSurfaceRendererTest`** (§11.4).
 
 - Creates every `AppGraph` singleton on a real Android runtime: DataStore files, ExoPlayer + `MediaSession`, download cache/manager, WorkManager queue, the SDK's HTTP stack.
 - Needs no Jellyfin server. Leaves real accounts alone.
 - **It installs the debug build**, which is signed differently from the release build — on a phone that has the release APK it will refuse to install rather than overwrite. Use an emulator, or uninstall first.
+
+---
+
+## 11. Car app (Stage 2)
+
+### 11.1 How it is put together
+
+- `AAFinCarAppService` → `AAFinSession` (one per car connection).
+- **On connect** the session:
+  1. builds a `CarEnv` — the one object every screen is given (`backend`, `limits`, `posters`, `quality`, `overlay`);
+  2. registers `VideoSurfaceRenderer` with `AppManager.setSurfaceCallback`;
+  3. starts `CarProfileSession` (which car is this?);
+  4. shows `HomeScreen`.
+- **On disconnect:** `graph.playback.stop()` (reports "stopped" to Jellyfin) and `renderer.release()`.
+- **Screens never touch `AppGraph`.** They use `CarBackend` (`car/CarEnv.kt`), a thin interface over Stage 1; `GraphCarBackend` is the real one, `FakeBackend` the test one.
+- **Never called:** `NavigationManager.navigationStarted()`. **Not declared:** any `MediaBrowserService` / `MediaSessionService`.
+
+### 11.2 Screen flow
+
+| Screen | Template | Opens |
+|---|---|---|
+| `HomeScreen` | `ListTemplate` (or `MessageTemplate` when signed out / server unreachable) | Continue watching, Next up, each library, Downloads, Search, Switch account (only with 2+ accounts) |
+| `EntryListScreen` | `ListTemplate` with posters | Player |
+| `LibraryScreen` | `GridTemplate` with posters | films → Player; series → Series; collections → Library |
+| `SeriesScreen` | `ListTemplate`: sections per season, **or** a season list, **or** a run of episodes | Player |
+| `DownloadsScreen` | `ListTemplate` (no network needed) | Player |
+| `SearchScreen` | `SearchTemplate` | Player / Series |
+| `AccountsScreen` | `ListTemplate` (radio list) | back to Home |
+| `PlayerScreen` | `NavigationTemplate` (or `MessageTemplate` on a playback error) | Options |
+| `PlayerOptionsScreen` → `ChoiceScreen` | `ListTemplate` → radio list | Audio / Subtitles (incl. Off) / Quality |
+
+**Player buttons** (limits checked in the library's `ActionsConstraints`):
+
+- **Action strip** — max 4, titles or icons: **Back, −10 s, Play/Pause, +30 s**.
+- **Map action strip** — max 4, icons only, car API 2+: **Options** and the standard **pan** action.
+  - The pan action is not decoration: without it the host does **not** send taps or drags on the picture to the app.
+- Car API 1 hosts (no map strip): one strip of Back, Play/Pause, +30 s, Options.
+
+**After an episode ends:** "Up next in 8 s · S1 E4 · …" on the picture, then it plays. Back cancels. After a film or the last episode the player closes.
+The next episode comes from the server's episode list, or from the downloads when the server cannot be reached.
+
+**Quality:** chosen in Options → saved to **this car's profile** (`CarProfileStore.setQuality`) → `PlaybackController.setQuality` re-resolves at the same position.
+
+### 11.3 Android Auto's limits, and how each is handled
+
+| Limit | Handling |
+|---|---|
+| **5 templates per task; the 5th must be a message or the player** | `CarScreen` (base class) knows which **step** each screen is and counts a step whenever what it shows changes in a way the host would not call a refresh. `FlowBudget` (pure, unit-tested) decides what may be offered. |
+| Going deeper than the budget | Never offered: a "More…" page or Search only appears if what it leads to still fits. |
+| Budget used up anyway (e.g. error → retry → content adds steps) | **Flow restart:** `FlowResetScreen` shows a `NavigationTemplate` for an instant (that template resets the host's count), then the stack is replaced by a fresh Home at step 2. No crash, one extra tap. |
+| Home must leave room for Library → Series → Player | Home restarts the flow itself if it would otherwise pass **step 2**. |
+| Rows per list / items per grid (`ConstraintManager.getContentLimit`, often **6**) | Read on every build (`HostContentLimits`); capped at 100 rows / 48 posters; falls back to 6. |
+| More items than fit | Last slot becomes **"More…"** (opens the next page as a new screen, so Back returns to the previous page). Title shows "Films · 1–5 of 300". |
+| Series longer than one screen | Season list → one screen per season; a long season **starts at the next episode to watch**. |
+| Template refresh quota | Posters arrive in batches: at most one redraw every 750 ms (`PosterBoard`). The player template is redrawn **only** when the play/pause button or the error state changes — position, title and clock are drawn on the surface instead. |
+| Images are copied to the head unit | Posters are ≤ 144 × 216 px, RGB 565 (~60 KB each). |
+| Old hosts | Every newer API is guarded by `carContext.carAppApiLevel` (map strip/pan ≥ 2, content limits ≥ 2, car model ≥ 3). Touch callbacks are only ever *called* by hosts that support them. |
+
+**Error handling**
+
+- Every load failure is a `JellyfinException` → `MessageTemplate` with its `userMessage` and **Retry**.
+- While a retry runs, the **same** message stays up with a spinner (a different message would cost a step).
+- A refresh that fails over content already on screen keeps the content and shows a toast.
+- Home's error and signed-out messages also offer **Downloads**, so offline playback is always reachable.
+
+### 11.4 Video rendering — the design and the evidence
+
+**Design** (`car/render/`):
+
+1. `onSurfaceAvailable` → `DisplayManager.createVirtualDisplay(name, w, h, dpi, carSurface, VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY)`.
+2. `VideoPresentation(carContext, virtualDisplay.display).show()` — a normal window whose layout (`res/layout/car_presentation.xml`) holds:
+   - a Media3 **`PlayerView`**: `use_controller=false`, `resize_mode=fit`, subtitles, buffering spinner;
+   - the **idle screen** (logo + "AAFin") whenever nothing is loaded;
+   - the **overlay** (title, position / progress bar / duration, clock) and a one-line **notice** (loading, errors, "Up next…", seek preview).
+3. `onSurfaceDestroyed` → detach the player, dismiss the window, release the display, release the `Surface`.
+
+**Why not `ExoPlayer.setVideoSurface(carSurface)`?** It stretches the picture to the screen's shape and leaves nowhere to draw subtitles or an overlay.
+
+**Why this is a proven pattern, not a guess**
+
+| Evidence | What it shows |
+|---|---|
+| Google's Car App Library guide, *Draw maps → "Use a virtual display to render content"* (developer.android.com/training/cars/apps/library/draw-maps) | The exact `VirtualDisplay` + `Presentation` recipe, with `carContext` as the Presentation's context |
+| Google's **Navigation SDK for Android Auto** guide (developers.google.com/maps/documentation/navigation/android-sdk/android-auto) | The same recipe in a shipping product, with `VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY` — the flag used here |
+| **`VideoSurfaceRendererTest`** (on-device, Android 14 emulator, real ExoPlayer, real H.264 file) | See below |
+
+`VideoSurfaceRendererTest` hands the renderer a surface exactly as Android Auto would (backed by an `ImageReader`, so the test reads the pixels back) and checks:
+
+- the idle logo is drawn;
+- a 4:3 video on a 5:3 surface is **letterboxed, not stretched** (green in the middle, black bars at the sides);
+- the picture moves inside the visible area and grows back when the area does;
+- destroy → recreate at another size → replace without destroy → late "destroyed" for the old surface → release: all clean, playback carries on;
+- **it keeps laying out and drawing with the phone's screen off**;
+- taps and drags drive play/pause and seek.
+
+**Fermata Auto** was checked and is **not** a precedent: it uses the legacy `com.google.android.apps.auto.sdk.CarActivity` projection SDK, not the Car App Library.
+
+**`SurfaceView` or `TextureView`?** → **`SurfaceView`** (`app:surface_type="surface_view"`).
+
+- It is ExoPlayer's recommended output and the one the device test proves is composited into the virtual display.
+- Its video layer is composed by the system, not drawn by the app's window, so it is the cheaper path and the one least affected by anything that slows window drawing.
+- **Fallback:** if a head unit ever gives sound but no picture, change that one attribute to `texture_view`. Nothing else changes.
+
+**Visible area**
+
+- `onVisibleAreaChanged` → the content is padded so the picture, logo and overlay sit inside the area the host is not drawing over (`SurfaceInsets`, unit-tested).
+- Falls back to the stable area if the visible area is unknown; ignores an area smaller than a quarter of the surface in either direction.
+- Consequence: the picture is full-size while the host's strips are hidden and shrinks slightly while they are showing.
+
+### 11.5 Threading
+
+- **Everything in `car/` runs on the main thread.** The Car App Library delivers screen and surface callbacks there; windows, the player and `graph.playback` / `graph.downloads` must be used there.
+- Coroutines use `lifecycleScope` of the session or screen (`Dispatchers.Main.immediate`), so they are cancelled when the car disconnects or the screen is popped.
+- Network and disk work suspends inside Stage 1 (OkHttp, DataStore, Coil) — nothing in `car/` blocks.
+
+### 11.6 Surface callbacks in any order
+
+| Situation | Behaviour |
+|---|---|
+| Area change before any surface | Remembered, applied when the surface arrives |
+| Second "available" with no "destroyed" (size or DPI change) | Old window and display torn down, new ones built |
+| "Destroyed" for a surface that is not the current one | Its `Surface` copy is released; the current window stays |
+| "Destroyed" twice / before any "available" | No-op |
+| Surface invalid or zero-sized | Skipped; wait for the next one |
+| Window creation throws (surface vanished mid-setup) | Logged, cleaned up, wait for the next one |
+| Android dismisses the Presentation itself (display changed) | Rebuilt on the same display, at most 3 times |
+| Anything after the session ended | Ignored; any `Surface` passed in is released |
+
+### 11.7 Touch
+
+- **Tap** (`onClick`, car API 5+): overlay hidden → show it. Overlay showing → play/pause. The overlay stays up while paused.
+- **Sideways drag** (`onScroll`, car API 2+): seeks — a full screen width is 3 minutes; a live "+0:45" preview shows; applied when the finger stops (or on `onFling`). Mostly-vertical drags are ignored.
+- Nothing happens unless a video is loaded. All of it is optional: the strip buttons do the same jobs.
+
+### 11.8 Car profiles
+
+- `CarProfileSession` runs once per connection:
+  1. `CarInfo.fetchModel` (car API 3+, 2 s timeout) → key `model:make|model|year`;
+  2. else the first surface (3 s timeout) → key `screen:WxH@dpi`;
+  3. else `screen:unknown`.
+- `CarProfileStore.getOrCreate(key, name)` → the profile's quality tier is read **each time something is played**, so a change on the phone applies to the next item.
+- **Wired and wireless are identical:** both the model and the surface come from the head unit, not the transport.
+
+### 11.9 Known risks (check these on the DHU and the car first)
+
+1. **Not yet run on a real Android Auto host.** Unit and device tests cover the app's side; the host's side (surface delivery, strips, template counting) is only as documented. See `docs/DHU-TEST-PLAN.md`.
+2. **Phone screen off:** proven on Android 14 (emulator). The owner's phone runs Android 16 — check that the picture keeps moving with the phone locked.
+3. **Template step counting is the host's.** If the host is stricter than documented, the symptom is an Android Auto error screen naming the step limit; the log line `Template budget used up` shows when the app's own guard fires.
+4. **Drag direction** follows Android's gesture convention (`distanceX` positive when the finger moves left). If dragging right seeks backwards on a real head unit, flip the sign in `VideoSurfaceRenderer.onScroll`.
+5. **Car model** may be reported on some connections and not others → two profiles for one car. Rename/delete on the phone (Stage 3).
+6. **Small content limits** (6): a long season only shows from the next unwatched episode onwards; earlier ones are reachable via Search.
+7. **The player and media session are created the first time something is played** and live until the process ends (Stage 1 design).
+8. Items 5, 7 and 8 of §9 still stand.
+
+### 11.10 Stage 1 changes made in Stage 2
+
+| Change | Why |
+|---|---|
+| `app/build.gradle.kts`: `unitTests.isIncludeAndroidResources = true` | Robolectric needs the app's resources for the car screen tests |
+| `car/PlaceholderScreen.kt` and `car_placeholder_message` removed | Replaced by the real screens |
+| `AAFinSession` rewritten | It was a stub |
+| New resources: `layout/car_presentation.xml`, `drawable/ic_car_*.xml`, `drawable/car_*_background.xml` | The video window and the car icons |
+| New test asset: `androidTest/assets/green-4x3.mp4` (5 KB) | The device test's video |
+
+**No data-layer code was changed.**
+
+### 11.11 Logging
+
+| Tag | What |
+|---|---|
+| `AAFin/Car` | session start/end, car profile, account changes, load failures, budget restarts |
+| `AAFin/Surface` | surface available/destroyed with size, visible/stable area, window shown, taps, drags |
+| `AAFin/Playback` | what is asked to play and at which quality, next episode, option changes |
+| `AAFin.Playback` | Stage 1's `PlaybackController` (player errors by code) |
+
+`adb logcat -s AAFin/Car AAFin/Surface AAFin/Playback AAFin.Playback`
+
+**Never logged:** tokens, stream URLs, poster URLs, search text.

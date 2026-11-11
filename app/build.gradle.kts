@@ -60,6 +60,8 @@ android {
     testOptions {
         // android.util.Log and friends return defaults in JVM unit tests instead of throwing.
         unitTests.isReturnDefaultValues = true
+        // Robolectric (car screen tests) needs the app's resources and manifest.
+        unitTests.isIncludeAndroidResources = true
     }
 
     packaging {
