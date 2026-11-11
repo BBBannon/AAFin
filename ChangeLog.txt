@@ -1,0 +1,5 @@
+v1.4 — 11/11/2026 — Checked and fixed after testing on a simulated car screen with the real server: tapping the picture no longer pauses, the play/pause button shows the right icon, the picture fills the screen after visiting Options, and a few rare crashes fixed. Video, resume, controls and options all confirmed working.
+v1.3 — 11/11/2026 — Phone app built: setup checklist, sign in with Quick Connect or password, multiple accounts, browse and download films and episodes (original or 720p), downloads manager, car list and settings. Fixed a crash that could happen when signing in.
+v1.2 — 11/11/2026 — Car screens built: browse films and TV on the car display, play video full-screen with on-screen controls, subtitles, audio and quality options, auto-play next episode, separate settings for each car.
+v1.1 — 11/11/2026 — Foundation built: app logo, signing key, Jellyfin sign-in (Quick Connect or password), multiple accounts, streaming and downloads behind the scenes.
+v1.0 — 11/11/2026 — Project started: agreed what the app will do and wrote the plan.
