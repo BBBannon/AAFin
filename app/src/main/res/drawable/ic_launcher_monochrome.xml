@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Themed-icon layer: the triangle with the arrowhead punched out (even-odd fill). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:fillType="evenOdd"
+        android:pathData="M47.98,33.38 Q54.00,23.00 60.02,33.38 L76.98,62.62 Q83.00,73.00 71.00,73.00 L37.00,73.00 Q25.00,73.00 31.02,62.62 Z M53.37,40.36 Q54.00,39.00 54.63,40.36 L65.87,64.64 Q66.50,66.00 65.17,65.31 L55.33,60.19 Q54.00,59.50 52.67,60.19 L42.83,65.31 Q41.50,66.00 42.13,64.64 Z" />
+</vector>

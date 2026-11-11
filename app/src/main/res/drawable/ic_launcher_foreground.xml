@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- AAFin logo: gradient rounded triangle carrying a white navigation arrowhead.
+     Generated from docs/tools/make_logo.py - keep the two in step. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path android:pathData="M47.98,33.38 Q54.00,23.00 60.02,33.38 L76.98,62.62 Q83.00,73.00 71.00,73.00 L37.00,73.00 Q25.00,73.00 31.02,62.62 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:type="linear"
+                android:startX="34"
+                android:startY="32"
+                android:endX="80"
+                android:endY="73"
+                android:startColor="#FFAA5CC3"
+                android:endColor="#FF00A4DC" />
+        </aapt:attr>
+    </path>
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M53.37,40.36 Q54.00,39.00 54.63,40.36 L65.87,64.64 Q66.50,66.00 65.17,65.31 L55.33,60.19 Q54.00,59.50 52.67,60.19 L42.83,65.31 Q41.50,66.00 42.13,64.64 Z" />
+</vector>
