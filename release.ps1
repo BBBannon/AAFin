@@ -15,7 +15,9 @@ $tag = "v$version"
 Write-Host "Releasing AAFin $version" -ForegroundColor Cyan
 
 # Safety checks: committed, on main, tag unused, notes written, signing set up.
-if (git status --porcelain) { throw 'Uncommitted changes. Commit them first.' }
+# Line-ending-only differences (CRLF vs LF on Windows) don't count as changes.
+git diff --ignore-cr-at-eol --quiet HEAD
+if ($LASTEXITCODE -ne 0 -or (git ls-files --others --exclude-standard)) { throw 'Uncommitted changes. Commit them first.' }
 if ((git branch --show-current) -ne 'main') { throw 'Not on main.' }
 if (git tag --list $tag) { throw "$tag already exists. Bump versionName first." }
 $notes = Get-Content ChangeLog.txt -Encoding utf8 | Where-Object { $_ -like "$tag *" } | Select-Object -First 1
