@@ -1,7 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
     What is drawn on the car's surface (see VideoSurfaceRenderer / VideoPresentation).
-    car_content is padded at run time to the area Android Auto says is not covered by its own UI.
+    car_content (logo, notices, overlay) is padded at run time to the area Android Auto says is not covered by its own UI.
+    The video is outside it so the picture never shrinks.
 
     surface_type: SurfaceView is ExoPlayer's recommended output and is what the on-device test
     (VideoSurfaceRendererTest) proves is composited into the virtual display. If a head unit ever
@@ -14,22 +15,23 @@
     android:layout_height="match_parent"
     android:background="@color/brand_dark">
 
+    <!-- The picture always fills the whole surface; only the overlay below is kept clear of Android Auto's buttons. -->
+    <androidx.media3.ui.PlayerView
+        android:id="@+id/car_player"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="@android:color/black"
+        android:visibility="invisible"
+        app:resize_mode="fit"
+        app:show_buffering="when_playing"
+        app:shutter_background_color="@android:color/black"
+        app:surface_type="surface_view"
+        app:use_controller="false" />
+
     <FrameLayout
         android:id="@+id/car_content"
         android:layout_width="match_parent"
         android:layout_height="match_parent">
-
-        <androidx.media3.ui.PlayerView
-            android:id="@+id/car_player"
-            android:layout_width="match_parent"
-            android:layout_height="match_parent"
-            android:background="@android:color/black"
-            android:visibility="invisible"
-            app:resize_mode="fit"
-            app:show_buffering="when_playing"
-            app:shutter_background_color="@android:color/black"
-            app:surface_type="surface_view"
-            app:use_controller="false" />
 
         <!-- Shown whenever nothing is loaded in the player. -->
         <LinearLayout

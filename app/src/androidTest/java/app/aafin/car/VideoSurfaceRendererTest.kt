@@ -182,7 +182,7 @@ class VideoSurfaceRendererTest {
     }
 
     @Test
-    fun pictureStaysInsideTheVisibleArea() {
+    fun pictureFillsTheSurfaceWhateverTheVisibleArea() {
         val screen = Screen(800, 480)
         onMain {
             renderer.onVisibleAreaChanged(Rect(0, 120, 800, 480)) // before any surface: remembered
@@ -190,14 +190,13 @@ class VideoSurfaceRendererTest {
         }
         startVideo()
 
-        // 360 px of height left: the 4:3 picture is 480 wide, centred, below the covered strip.
-        await("green video inside the visible area") { screen.pixel(400, 300).isGreen() }
-        assertTrue("covered strip is left clear", screen.pixel(400, 60).isBrandDark())
-        assertTrue("bar beside the smaller picture", screen.pixel(100, 300).isBlack())
+        // The host's strips only cover the picture briefly, so the video never shrinks for them:
+        // the 4:3 picture keeps the full 480 px height, including the strip the host covers.
+        await("green video across the full height") { screen.pixel(400, 300).isGreen() && screen.pixel(400, 60).isGreen() }
+        assertTrue("bar beside the 4:3 picture", screen.pixel(40, 200).isBlack())
 
-        // The host hides its controls: the whole surface is visible again and the picture grows.
         onMain { renderer.onVisibleAreaChanged(Rect(0, 0, 800, 480)) }
-        await("picture fills the height again") { screen.pixel(400, 60).isGreen() && screen.pixel(100, 300).isGreen() }
+        await("still full height") { screen.pixel(400, 60).isGreen() }
     }
 
     @Test
@@ -259,10 +258,10 @@ class VideoSurfaceRendererTest {
             startVideo()
             await("video while the phone sleeps") { screen.pixel(400, 240).isGreen() }
 
-            // A layout change made while asleep must reach the car screen too.
+            // A layout change made while asleep must not disturb the picture.
             onMain { renderer.onVisibleAreaChanged(Rect(0, 120, 800, 480)) }
-            await("the picture to move inside the new visible area") {
-                screen.pixel(400, 60).isBrandDark() && screen.pixel(400, 300).isGreen()
+            await("the picture to stay full size") {
+                screen.pixel(400, 60).isGreen() && screen.pixel(400, 300).isGreen()
             }
             assertFalse(power.isInteractive)
         } finally {
