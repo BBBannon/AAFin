@@ -91,6 +91,10 @@ Details: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) · [`docs/SPEC.md`](docs
 
 AAFin doesn't block video while the car is moving. **Watching video while driving is dangerous and illegal in many countries.** Use it when parked, or for passengers only where the law allows. You use it at your own risk.
 
+## Licence
+
+**GPL-3.0** — see [`LICENSE`](LICENSE). Free to use, change and share, but any copy or modified version must also stay free and open source under the same licence.
+
 ## Disclaimer
 
 AAFin is an independent project. It isn't affiliated with or endorsed by **Jellyfin** or **Google**. Android Auto is a trademark of Google LLC.
