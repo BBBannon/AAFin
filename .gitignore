@@ -12,3 +12,47 @@ test-credentials.properties
 captures/
 .kotlin/
 releases/
+
+# Personal to-do (lives in Obsidian, not public)
+TODO.md
+
+# Built apps and packages
+*.apk
+*.aab
+*.ap_
+*.apks
+*.dex
+output-metadata.json
+
+# Signing and secrets (never publish)
+*.p12
+*.pem
+*.pepk
+*.der
+signing/
+.env
+.env.*
+google-services.json
+*credentials*.properties
+secrets.properties
+
+# Native and Gradle build leftovers
+/build/
+.cxx/
+.externalNativeBuild/
+.gradle-cache/
+
+# Logs, dumps and crash files
+*.log
+*.hprof
+logcat*.txt
+bugreport*.zip
+
+# Editors, OS and AI-tool working files
+.vscode/
+.fleet/
+*.swp
+Thumbs.db
+desktop.ini
+.claude/
+tasks/
